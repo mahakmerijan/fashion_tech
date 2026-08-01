@@ -34,5 +34,10 @@ async def get_db():
 
 
 async def create_tables():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    except Exception as e:
+        # May happen if multiple workers start simultaneously — tables already exist
+        import logging
+        logging.getLogger(__name__).warning("create_tables: %s", e)
