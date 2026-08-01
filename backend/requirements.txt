@@ -11,6 +11,7 @@ asyncpg
 psycopg2-binary
 redis
 pillow
+numpy
 google-genai
 langchain
 langgraph

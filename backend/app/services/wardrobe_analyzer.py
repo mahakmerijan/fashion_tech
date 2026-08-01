@@ -15,7 +15,12 @@ import json
 import logging
 from typing import Optional
 
-import numpy as np
+try:
+    import numpy as np
+    _NUMPY_AVAILABLE = True
+except ImportError:
+    _NUMPY_AVAILABLE = False
+
 from PIL import Image
 from google import genai
 from google.genai import types
