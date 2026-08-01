@@ -26,11 +26,6 @@ export default function LandingPage() {
                 Get Started Free
               </Button>
             </Link>
-            <Link href="/dashboard">
-              <Button size="lg" variant="outline" className="border-white text-white hover:bg-white/10 text-base font-semibold px-10">
-                View Demo
-              </Button>
-            </Link>
           </div>
         </div>
       </section>
