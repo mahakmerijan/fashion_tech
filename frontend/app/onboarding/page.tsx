@@ -94,8 +94,14 @@ export default function OnboardingPage() {
       setMode("done");
       setTimeout(() => router.push("/onboarding/gender"), 500);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Analysis failed. Please try again.");
-      setMode("error");
+      // If it's a network error (backend cold-starting), retry once after 8 seconds
+      if (err instanceof TypeError && err.message.includes("fetch")) {
+        setErrorMsg("Backend is waking up… retrying in 8 seconds.");
+        setTimeout(() => analyzeImage(), 8000);
+      } else {
+        setErrorMsg(err instanceof Error ? err.message : "Analysis failed. Please try again.");
+        setMode("error");
+      }
     }
   };
 

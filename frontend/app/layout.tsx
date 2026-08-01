@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import BackendWakeup from "./BackendWakeup";
 
 export const metadata: Metadata = {
   title: "StyleAI – Your Personal Fashion Intelligence",
@@ -10,6 +11,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className="min-h-screen bg-[#f8f7ff] text-[#1e1b4b] antialiased">
+        <BackendWakeup />
         {children}
       </body>
     </html>
