@@ -6,6 +6,7 @@ sqlalchemy==2.0.36
 alembic==1.14.0
 asyncpg==0.30.0
 psycopg2-binary==2.9.10
+aiosqlite==0.22.0
 redis==5.2.0
 python-multipart==0.0.19
 aiofiles==24.1.0
@@ -18,13 +19,14 @@ torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
 transformers==4.47.1
 sentence-transformers==3.3.1
+google-genai==2.12.1
 google-generativeai==0.8.3
 langchain==0.3.13
 langchain-google-genai==2.0.7
 langgraph==0.2.62
 boto3==1.35.94
 python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
+passlib==1.7.4
 python-dotenv==1.0.1
 qdrant-client==1.12.2
 celery==5.4.0
