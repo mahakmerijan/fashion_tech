@@ -124,11 +124,20 @@ async def delete_wardrobe_item(user_id: str, item_id: str, db: AsyncSession = De
 
 
 async def _store_image(data: bytes, key: str) -> str:
-    """Store image bytes. Production: S3/R2. Dev: local /tmp."""
+    """
+    Store image bytes.
+    Priority: S3 (if configured) → base64 data URL in DB (persistent, no filesystem).
+    """
     from app.core.config import get_settings
+    import base64
+    import io
+    from PIL import Image as PILImage
+
     s = get_settings()
-    try:
-        if s.AWS_ACCESS_KEY_ID:
+
+    # Try S3 if credentials are set
+    if s.AWS_ACCESS_KEY_ID:
+        try:
             import boto3
             s3 = boto3.client("s3", region_name=s.S3_REGION,
                               aws_access_key_id=s.AWS_ACCESS_KEY_ID,
@@ -136,14 +145,27 @@ async def _store_image(data: bytes, key: str) -> str:
             s3.put_object(Bucket=s.S3_BUCKET, Key=key, Body=data, ContentType="image/jpeg")
             base = s.CDN_BASE_URL or f"https://{s.S3_BUCKET}.s3.{s.S3_REGION}.amazonaws.com"
             return f"{base}/{key}"
+        except Exception:
+            pass
+
+    # Fallback: compress to thumbnail and store as base64 data URL in the DB.
+    # This is persistent (SQLite) and requires no external storage.
+    try:
+        img = PILImage.open(io.BytesIO(data)).convert("RGB")
+        img.thumbnail((300, 300), PILImage.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=75, optimize=True)
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        return f"data:image/jpeg;base64,{b64}"
     except Exception:
         pass
-    # Local dev fallback — save under /tmp/styleai and return absolute URL
+
+    # Last resort: local /tmp (dev only)
     import pathlib
     p = pathlib.Path(f"/tmp/styleai/{key}")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_bytes(data)
-    return f"http://localhost:8000/static/{key}"
+    return f"/static/{key}"
 
 
 def _item_to_out(item: WardrobeItem) -> WardrobeItemOut:

@@ -9,6 +9,7 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 function resolveImageUrl(url: string): string {
   if (!url) return "";
+  if (url.startsWith("data:")) return url;   // base64 data URL — use as-is
   if (url.startsWith("http")) return url;
   return `${API}${url}`;
 }
