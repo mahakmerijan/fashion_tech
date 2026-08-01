@@ -53,6 +53,25 @@ export default function RecommendationsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
+
+  // Helper: returns true if a shopping item's description matches something already in the wardrobe
+  const isInWardrobe = (forItem: string): boolean => {
+    if (!forItem) return false;
+    try {
+      const raw = localStorage.getItem("fashion-tech-user");
+      if (!raw) return false;
+      const parsed = JSON.parse(raw);
+      const wardrobe: Array<{ category?: string; primary_color?: string; sub_category?: string }> =
+        parsed?.wardrobe || parsed?.state?.wardrobe || [];
+      const needle = forItem.toLowerCase();
+      return wardrobe.some((w) => {
+        const desc = `${w.primary_color || ""} ${w.sub_category || w.category || ""}`.toLowerCase().trim();
+        const cat = (w.sub_category || w.category || "").toLowerCase();
+        // Match if category appears in the item description OR vice-versa
+        return desc && (needle.includes(cat) || cat.split(" ").some(word => word.length > 3 && needle.includes(word)));
+      });
+    } catch { return false; }
+  };
   const feedbackRef = useRef("");
   const [feedbackShoppingResults, setFeedbackShoppingResults] = useState<ShoppingResult[]>(() => {
     // Restore from sessionStorage on mount so results survive page reloads
@@ -386,26 +405,31 @@ export default function RecommendationsPage() {
               </div>
             )}
 
-            {/* Original shopping results */}
+            {/* Original shopping results — filtered to exclude wardrobe items */}
             {result.shopping_results?.length > 0 && (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-                {result.shopping_results.slice(0, 8).map((r: ShoppingResult, i: number) => (
-                  <ProductCard key={i} result={r} />
-                ))}
+                {result.shopping_results
+                  .filter((r: ShoppingResult) => !isInWardrobe(r.for_item || ""))
+                  .slice(0, 8)
+                  .map((r: ShoppingResult, i: number) => (
+                    <ProductCard key={i} result={r} />
+                  ))}
               </div>
             )}
 
-            {/* Feedback-based additions */}
-            {feedbackShoppingResults.length > 0 && (
+            {/* Feedback-based additions — filtered to exclude wardrobe items */}
+            {feedbackShoppingResults.filter(r => !isInWardrobe(r.for_item || "")).length > 0 && (
               <div className="mt-6">
                 <div className="flex items-center gap-2 mb-4">
                   <span className="text-sm font-semibold text-violet-700">✨ Spotted in your look — not in wardrobe</span>
                   <span className="text-xs bg-violet-100 text-violet-600 rounded-full px-2 py-0.5">Shop Now</span>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-                  {feedbackShoppingResults.map((r: ShoppingResult, i: number) => (
-                    <ProductCard key={`fb-${i}`} result={r} />
-                  ))}
+                  {feedbackShoppingResults
+                    .filter((r: ShoppingResult) => !isInWardrobe(r.for_item || ""))
+                    .map((r: ShoppingResult, i: number) => (
+                      <ProductCard key={`fb-${i}`} result={r} />
+                    ))}
                 </div>
               </div>
             )}

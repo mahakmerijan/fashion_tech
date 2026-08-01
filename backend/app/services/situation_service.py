@@ -198,7 +198,7 @@ AVAILABLE WARDROBE ITEMS:
 
 TASK:
 1. Pick the single best outfit combination from the wardrobe (max 4-5 pieces)
-2. Identify any missing items that would complete the look
+2. Identify any TRULY MISSING items — items NOT in the wardrobe list above that would complete the look. CRITICAL: Do NOT list items that are already in the AVAILABLE WARDROBE ITEMS section as missing_items, even if you use a different colour name or description. Only suggest items that are genuinely absent from the wardrobe.
 3. Explain WHY this outfit works for this specific situation and place
 4. Give 3-5 styling tips
 5. Suggest colour pairings
