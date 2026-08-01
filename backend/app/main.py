@@ -36,7 +36,11 @@ app = FastAPI(
 # ─── CORS ─────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://styleai.app"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://styleai.app",
+        "https://fashion-tech-frontend.onrender.com",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
