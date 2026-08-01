@@ -19,8 +19,13 @@ import hashlib
 import logging
 from typing import Optional
 
-import cv2
-import numpy as np
+try:
+    import cv2
+    import numpy as np
+    _CV2_AVAILABLE = True
+except ImportError:
+    _CV2_AVAILABLE = False
+
 from PIL import Image
 from google import genai
 from google.genai import types
@@ -95,6 +100,8 @@ def compress_image(data: bytes, max_size: int = 1024) -> bytes:
 
 def detect_eye_color_opencv(image_bytes: bytes) -> Optional[str]:
     """Simple heuristic: detect dominant colour in iris region using OpenCV."""
+    if not _CV2_AVAILABLE:
+        return None
     try:
         nparr = np.frombuffer(image_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
