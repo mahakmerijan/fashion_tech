@@ -174,33 +174,11 @@ export default function WardrobePage() {
             </div>
           )}
 
-          {/* Server wardrobe items */}
+          {/* Server wardrobe items — just show count, no grid */}
           {wardrobe.length > 0 && (
-            <div>
-              <p className="text-sm font-medium text-slate-700 mb-3">Saved Wardrobe ({wardrobe.length} items)</p>
-              <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
-                {wardrobe.map((item) => (
-                  <div key={item.item_id} className="relative group rounded-xl overflow-hidden aspect-square border border-slate-200">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={resolveImageUrl(item.image_url)}
-                      alt={item.category}
-                      className="w-full h-full object-cover"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).src = `https://placehold.co/120x120/e0d7ff/7c3aed?text=${encodeURIComponent(item.category || "?")}` ;
-                      }}
-                    />
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all" />
-                    <div className="absolute bottom-0 left-0 right-0 p-1 bg-gradient-to-t from-black/50 to-transparent">
-                      <p className="text-white text-xs truncate">{item.category}</p>
-                    </div>
-                    <button
-                      onClick={() => removeServer(item.item_id)}
-                      className="absolute top-1 right-1 w-6 h-6 bg-white/90 rounded-full text-xs text-red-500 opacity-0 group-hover:opacity-100 transition-opacity shadow"
-                    >✕</button>
-                  </div>
-                ))}
-              </div>
+            <div className="flex items-center gap-2 px-4 py-3 bg-violet-50 border border-violet-200 rounded-xl">
+              <span className="text-violet-600 text-lg">✓</span>
+              <p className="text-sm font-medium text-slate-700">{wardrobe.length} item{wardrobe.length !== 1 ? "s" : ""} uploaded to your wardrobe</p>
             </div>
           )}
 
