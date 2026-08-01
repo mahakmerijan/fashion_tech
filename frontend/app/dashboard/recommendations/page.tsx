@@ -54,7 +54,8 @@ export default function RecommendationsPage() {
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
 
-  // Helper: returns true if a shopping item's description matches something already in the wardrobe
+  // Helper: returns true if a shopping item already exists in the wardrobe
+  // Matches on BOTH category AND color — different color = different item, should still show
   const isInWardrobe = (forItem: string): boolean => {
     if (!forItem) return false;
     try {
@@ -65,10 +66,13 @@ export default function RecommendationsPage() {
         parsed?.wardrobe || parsed?.state?.wardrobe || [];
       const needle = forItem.toLowerCase();
       return wardrobe.some((w) => {
-        const desc = `${w.primary_color || ""} ${w.sub_category || w.category || ""}`.toLowerCase().trim();
         const cat = (w.sub_category || w.category || "").toLowerCase();
-        // Match if category appears in the item description OR vice-versa
-        return desc && (needle.includes(cat) || cat.split(" ").some(word => word.length > 3 && needle.includes(word)));
+        const color = (w.primary_color || "").toLowerCase();
+        if (!cat || !color) return false;
+        // Must match BOTH category-type AND color to be considered "already owned"
+        const catMatch = cat.split(" ").some(word => word.length > 3 && needle.includes(word));
+        const colorMatch = color.length > 2 && needle.includes(color);
+        return catMatch && colorMatch;
       });
     } catch { return false; }
   };
