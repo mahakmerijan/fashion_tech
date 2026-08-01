@@ -1,12 +1,15 @@
 import json
 import hashlib
+import logging
 from typing import Any, Optional
 import redis.asyncio as aioredis
 from app.core.config import get_settings
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 _pool: Optional[aioredis.ConnectionPool] = None
+_redis_available: Optional[bool] = None  # None = untested, True/False = known
 
 
 def get_redis_pool() -> aioredis.ConnectionPool:
@@ -16,6 +19,7 @@ def get_redis_pool() -> aioredis.ConnectionPool:
             settings.REDIS_URL,
             max_connections=20,
             decode_responses=True,
+            socket_connect_timeout=2,
         )
     return _pool
 
@@ -24,7 +28,7 @@ def get_redis() -> aioredis.Redis:
     return aioredis.Redis(connection_pool=get_redis_pool())
 
 
-# ─── Keys ────────────────────────────────────────────────────────────────────
+# ─── Keys ─────────────────────────────────────────────────────────────────────
 
 def profile_context_key(user_id: str) -> str:
     return f"user:profile_context:{user_id}"
@@ -43,27 +47,36 @@ def face_analysis_key(image_hash: str) -> str:
     return f"face:analysis:{image_hash}"
 
 
-# ─── Helpers ──────────────────────────────────────────────────────────────────
+# ─── Helpers (all no-op when Redis is unavailable) ────────────────────────────
 
 async def cache_get(key: str) -> Optional[Any]:
-    r = get_redis()
-    val = await r.get(key)
-    if val:
-        try:
-            return json.loads(val)
-        except json.JSONDecodeError:
-            return val
-    return None
+    try:
+        r = get_redis()
+        val = await r.get(key)
+        if val:
+            try:
+                return json.loads(val)
+            except json.JSONDecodeError:
+                return val
+        return None
+    except Exception:
+        return None
 
 
 async def cache_set(key: str, value: Any, ttl: int) -> None:
-    r = get_redis()
-    await r.setex(key, ttl, json.dumps(value) if not isinstance(value, str) else value)
+    try:
+        r = get_redis()
+        await r.setex(key, ttl, json.dumps(value) if not isinstance(value, str) else value)
+    except Exception:
+        pass  # Redis unavailable — skip caching silently
 
 
 async def cache_delete(key: str) -> None:
-    r = get_redis()
-    await r.delete(key)
+    try:
+        r = get_redis()
+        await r.delete(key)
+    except Exception:
+        pass
 
 
 async def build_and_cache_profile_context(user_id: str, profile: dict, wardrobe: list[dict]) -> str:
