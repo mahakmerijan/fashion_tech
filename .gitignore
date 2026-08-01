@@ -16,4 +16,3 @@ dist/
 *.log
 *.db
 generated_test*.png
-frontend/public/styles/
