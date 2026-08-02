@@ -122,29 +122,55 @@ async def situation_recommend(
     )
 
     recommendation = result.get("recommendation", {})
+    recommendation_2 = result.get("recommendation_2", {})
     composite_image_url = result.get("composite_image_url", "")
+    composite_image_url_2 = result.get("composite_image_url_2", "")
     place_analysis = result.get("place_analysis", "")
+    budget = prefs.get("budget", "")
+    gender = prefs.get("gender", "men").lower().replace("male", "men").replace("female", "women")
 
-    # ── Search shopping sites for missing items (async, cached) ───────────────
+    # ── Collect all missing items from both outfits ────────────────────────────
+    all_missing = recommendation.get("missing_items", []) + recommendation_2.get("missing_items", [])
+    # Deduplicate by description
+    seen_descs: set[str] = set()
+    unique_missing = []
+    for item in all_missing:
+        key = f"{item.get('color','').lower()}-{item.get('category','').lower()}"
+        if key not in seen_descs:
+            seen_descs.add(key)
+            unique_missing.append(item)
+
+    # ── Get Gemini-powered specific product links ──────────────────────────────
     shopping_results = []
-    missing = recommendation.get("missing_items", [])
-    if missing:
-        gender = prefs.get("gender", "men").lower().replace("male", "men").replace("female", "women")
-        for item in missing[:3]:
-            results = await search_all_platforms(
-                category=item.get("category", "clothing"),
-                color=item.get("color", ""),
-                fit=prefs.get("fit", "Regular Fit"),
+    if unique_missing:
+        try:
+            from app.services.shopping_aggregator import get_specific_product_links
+            shopping_results = await get_specific_product_links(
+                missing_items=unique_missing[:4],
+                budget=budget,
                 gender=gender,
-                description=item.get("description", ""),
+                skin_tone=face.get("skin_tone", ""),
+                situation=situation_text,
             )
-            for r in results:
-                r["for_item"] = item.get("description", "")
-            shopping_results.extend(results)
+        except Exception as e:
+            logger.warning("Specific product links failed, falling back: %s", e)
+            for item in unique_missing[:3]:
+                results = await search_all_platforms(
+                    category=item.get("category", "clothing"),
+                    color=item.get("color", ""),
+                    fit=prefs.get("fit", "Regular Fit"),
+                    gender=gender,
+                    description=item.get("description", ""),
+                )
+                for r in results:
+                    r["for_item"] = item.get("description", "")
+                shopping_results.extend(results)
 
     return {
         "recommendation": recommendation,
+        "recommendation_2": recommendation_2,
         "composite_image_url": composite_image_url,
+        "composite_image_url_2": composite_image_url_2,
         "place_analysis": place_analysis,
         "situation_text": situation_text,
         "person_description": person_description,

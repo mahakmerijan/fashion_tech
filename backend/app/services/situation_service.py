@@ -62,7 +62,9 @@ class SituationState(TypedDict):
     place_analysis: str
     filtered_wardrobe: list[dict]
     recommendation: dict
+    recommendation_2: dict          # second outfit option
     composite_image_url: str
+    composite_image_url_2: str      # second outfit image
     errors: Annotated[list[str], operator.add]
 
 
@@ -197,40 +199,38 @@ AVAILABLE WARDROBE ITEMS:
 {wardrobe_text or 'No wardrobe items uploaded.'}
 
 TASK:
-1. Pick the single best outfit combination from the wardrobe (max 4-5 pieces)
-2. Identify any TRULY MISSING items — items NOT in the wardrobe list above that would complete the look. CRITICAL: Do NOT list items that are already in the AVAILABLE WARDROBE ITEMS section as missing_items, even if you use a different colour name or description. Only suggest items that are genuinely absent from the wardrobe.
-3. Explain WHY this outfit works for this specific situation and place
-4. Give 3-5 styling tips
-5. Suggest colour pairings
+Create TWO distinct outfit options from the wardrobe that suit this situation and venue.
+For each outfit:
+1. Pick 3-5 pieces from the wardrobe — the two outfits must use DIFFERENT combinations
+2. Identify TRULY MISSING items NOT in the wardrobe (different colours/categories not present). Do NOT list wardrobe items as missing.
+3. Match the outfit to the venue ambiance, formality, and user's skin tone/colour season
+4. Give styling tips specific to the venue lighting and setting
+5. Suggest complementary colours
 
-Return ONLY valid JSON:
+Return ONLY valid JSON with this exact structure:
 {{
-  "outfit_id": "unique_id",
-  "title": "Outfit Name",
-  "rationale": "Detailed explanation of why this outfit works for the situation",
-  "items": [
-    {{
-      "item_id": "ID_from_wardrobe",
-      "category": "Shirt",
-      "description": "exact description",
-      "color": "color",
-      "from_wardrobe": true
-    }}
-  ],
-  "missing_items": [
-    {{
-      "item_id": null,
-      "category": "category",
-      "description": "what to buy",
-      "color": "color",
-      "from_wardrobe": false,
-      "search_query": "search term for shopping sites"
-    }}
-  ],
-  "styling_tips": ["tip1", "tip2", "tip3"],
-  "color_suggestions": ["suggestion1"],
-  "place_outfit_compatibility": "High|Medium|Low",
-  "confidence": 0.95
+  "outfit_1": {{
+    "outfit_id": "unique_id_1",
+    "title": "First Outfit Name",
+    "rationale": "Why this works for the situation, venue, and skin tone",
+    "items": [{{"item_id": "ID", "category": "Shirt", "description": "desc", "color": "color", "from_wardrobe": true}}],
+    "missing_items": [{{"item_id": null, "category": "cat", "description": "what to buy", "color": "color", "from_wardrobe": false}}],
+    "styling_tips": ["tip1", "tip2"],
+    "color_suggestions": ["suggestion1"],
+    "place_outfit_compatibility": "High|Medium|Low",
+    "confidence": 0.92
+  }},
+  "outfit_2": {{
+    "outfit_id": "unique_id_2",
+    "title": "Second Outfit Name (different style/pieces from outfit_1)",
+    "rationale": "Why this alternative works",
+    "items": [{{"item_id": "ID", "category": "Pants", "description": "desc", "color": "color", "from_wardrobe": true}}],
+    "missing_items": [{{"item_id": null, "category": "cat", "description": "what to buy", "color": "color", "from_wardrobe": false}}],
+    "styling_tips": ["tip1", "tip2"],
+    "color_suggestions": ["suggestion1"],
+    "place_outfit_compatibility": "High|Medium|Low",
+    "confidence": 0.88
+  }}
 }}"""
 
     try:
@@ -240,17 +240,22 @@ Return ONLY valid JSON:
             contents=prompt,
             config=gtypes.GenerateContentConfig(
                 response_mime_type="application/json",
-                temperature=0.25,
-                max_output_tokens=2048,
+                temperature=0.3,
+                max_output_tokens=3000,
             ),
         )
-        rec = json.loads(response.text)
-        if not rec.get("outfit_id"):
-            rec["outfit_id"] = str(uuid.uuid4())
-        return {"recommendation": rec}
+        data = json.loads(response.text)
+        rec1 = data.get("outfit_1", {})
+        rec2 = data.get("outfit_2", {})
+        if not rec1.get("outfit_id"):
+            rec1["outfit_id"] = str(uuid.uuid4())
+        if not rec2.get("outfit_id"):
+            rec2["outfit_id"] = str(uuid.uuid4())
+        # Also expose the primary recommendation as rec for backward-compat
+        return {"recommendation": rec1, "recommendation_2": rec2}
     except Exception as e:
         logger.error("Gemini outfit reasoning failed: %s", e)
-        return {"recommendation": {}, "errors": [f"Reasoning error: {e}"]}
+        return {"recommendation": {}, "recommendation_2": {}, "errors": [f"Reasoning error: {e}"]}
 
 
 async def generate_composite_image(state: SituationState) -> dict:
@@ -399,7 +404,56 @@ async def generate_composite_image(state: SituationState) -> dict:
             image_data, f"generated/{state['user_id']}/situation_{cache_hash[:12]}.jpg"
         )
         await cache_set(cache_key, image_url, settings.CACHE_TTL_IMAGE)
-        return {"composite_image_url": image_url}
+
+        # ── Generate second outfit image (outfit_2) ────────────────────────────
+        rec2 = state.get("recommendation_2", {})
+        image_url_2 = ""
+        if rec2 and rec2.get("items"):
+            try:
+                items2 = rec2.get("items", [])
+                outfit_parts2 = [f"{i.get('color','')} {i.get('description','')}" for i in items2[:4]]
+                outfit_str2 = ", ".join(p for p in outfit_parts2 if p)
+
+                if selfie_bytes:
+                    prompt2 = (
+                        f"Professional fashion editorial photograph of a {subject}. "
+                        f"Match the face, skin tone, and hair from the FIRST reference photo (the selfie). "
+                        f"CRITICAL PROPORTIONS: Natural human anatomy, correct head-to-body ratio (~1:7). Single seamless photograph. "
+                        f"This is a {subject} — do NOT change the gender or skin tone. "
+                        f"Outfit (DIFFERENT from previous look): {outfit_str2}.{style_phrase} "
+                        f"Setting: {state.get('situation_text', '')}. "
+                        f"{'Place person in venue shown in second reference photo.' if place_bytes else 'Studio background suited to venue.'} "
+                        f"Full body shot, high quality fashion photography."
+                    )
+                    contents2: list = [prompt2]
+                    contents2.append(gtypes.Part.from_bytes(data=compress_image(selfie_bytes), mime_type="image/jpeg"))
+                    if place_bytes:
+                        contents2.append(gtypes.Part.from_bytes(data=place_compressed, mime_type="image/jpeg"))
+                else:
+                    prompt2 = (
+                        f"Fashion editorial photograph of a {subject}. "
+                        f"A {face_desc} wearing {outfit_str2}.{style_phrase} "
+                        f"DIFFERENT look from any previous generation. "
+                        f"Setting: {state.get('situation_text', '')}. Full body shot."
+                    )
+                    contents2 = prompt2
+
+                resp2 = client.models.generate_content(
+                    model=settings.GEMINI_MODEL_IMAGE,
+                    contents=contents2,
+                    config=gtypes.GenerateContentConfig(response_modalities=["IMAGE", "TEXT"]),
+                )
+                for part2 in resp2.candidates[0].content.parts:
+                    if part2.inline_data and part2.inline_data.mime_type.startswith("image"):
+                        image_url_2 = await upload_image_to_storage(
+                            part2.inline_data.data,
+                            f"generated/{state['user_id']}/situation2_{cache_hash[:12]}.jpg"
+                        )
+                        break
+            except Exception as e2:
+                logger.warning("Second outfit image failed: %s", e2)
+
+        return {"composite_image_url": image_url, "composite_image_url_2": image_url_2}
 
     except Exception as e:
         err_str = str(e)
@@ -419,10 +473,10 @@ async def generate_composite_image(state: SituationState) -> dict:
                 f"__STYLE_CARD__|{outfit_summary}|"
                 f"{state.get('situation_text','')[:80]}"
             )
-            return {"composite_image_url": card_url}
+            return {"composite_image_url": card_url, "composite_image_url_2": ""}
 
         placeholder = "https://placehold.co/512x768/7c3aed/white?text=Image+Generation+Failed"
-        return {"composite_image_url": placeholder}
+        return {"composite_image_url": placeholder, "composite_image_url_2": ""}
 
 
 # ─── Graph ────────────────────────────────────────────────────────────────────
@@ -476,7 +530,9 @@ async def run_situation_pipeline(
         "place_analysis": "",
         "filtered_wardrobe": [],
         "recommendation": {},
+        "recommendation_2": {},
         "composite_image_url": "",
+        "composite_image_url_2": "",
         "errors": [],
     })
     return result

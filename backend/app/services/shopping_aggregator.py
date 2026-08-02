@@ -143,3 +143,100 @@ async def search_all_platforms(
     # Cache with 12h TTL
     await cache_set(cache_key, results, settings.CACHE_TTL_RETAIL)
     return results
+
+
+async def get_specific_product_links(
+    missing_items: list[dict],
+    budget: str = "",
+    gender: str = "men",
+    skin_tone: str = "",
+    situation: str = "",
+) -> list[dict]:
+    """
+    Use Gemini to identify 2 specific real products per missing item,
+    complete with realistic product deep-links within the user's budget.
+    """
+    import json as _json
+    from app.services.image_generator import get_client
+    from google.genai import types as gtypes
+
+    if not missing_items:
+        return []
+
+    budget_note = f"User's budget: {budget} per item." if budget else ""
+    gender_word = "women" if gender == "women" else "men"
+    skin_note = f"User's skin tone: {skin_tone}. Suggest colours that complement this tone." if skin_tone else ""
+
+    items_text = "\n".join(
+        f"- {i.get('color', '')} {i.get('description', i.get('category', ''))} (category: {i.get('category', '')})"
+        for i in missing_items
+    )
+
+    prompt = f"""You are a fashion shopping assistant for Indian e-commerce.
+
+The user needs to buy these specific items to complete their outfit for: {situation}.
+{budget_note}
+{skin_note}
+Gender: {gender_word}
+
+Items needed:
+{items_text}
+
+For EACH item, suggest exactly 2 specific real products available on Indian e-commerce platforms.
+Choose from: Amazon India, Flipkart, Myntra, AJIO.
+{'Keep prices within ' + budget + '.' if budget else ''}
+
+IMPORTANT URL FORMAT RULES:
+- Amazon: https://www.amazon.in/s?k=PRODUCT+NAME+IN+PLUS+SIGNS&i=apparel
+- Flipkart: https://www.flipkart.com/search?q=PRODUCT+NAME&sort=relevance  
+- Myntra: https://www.myntra.com/CATEGORY?rawQuery=PRODUCT+NAME
+- AJIO: https://www.ajio.com/search/?text=PRODUCT+NAME&gender={gender_word}
+
+Use the ACTUAL product name (brand + model/style + color) in the URL, not generic terms.
+Example for "navy slim jeans": use "levis-511-slim-navy-jeans" or "wrogn-slim-fit-navy-jeans"
+
+Return ONLY a valid JSON array:
+[
+  {{
+    "for_item": "exact description of the item being recommended for",
+    "name": "Brand + Product Name",
+    "estimated_price": "₹X,XXX",
+    "platform": "Amazon|Flipkart|Myntra|AJIO",
+    "url": "specific deep-link URL",
+    "from_image": true
+  }}
+]
+
+Return ONLY the JSON array, 2 products per missing item."""
+
+    try:
+        client = get_client()
+        resp = client.models.generate_content(
+            model=settings.GEMINI_MODEL_RECOMMEND,
+            contents=prompt,
+            config=gtypes.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0.2,
+                max_output_tokens=1500,
+            ),
+        )
+        products = _json.loads(resp.text)
+        if not isinstance(products, list):
+            products = []
+
+        # Normalize results
+        results = []
+        for p in products:
+            results.append({
+                "name": p.get("name", ""),
+                "price": p.get("estimated_price", ""),
+                "url": p.get("url", ""),
+                "image_url": "",
+                "platform": p.get("platform", ""),
+                "for_item": p.get("for_item", ""),
+                "from_image": True,
+            })
+        return results
+    except Exception as e:
+        logger.error("get_specific_product_links failed: %s", e)
+        return []

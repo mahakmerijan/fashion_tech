@@ -36,7 +36,9 @@ interface ShoppingResult {
 
 interface SituationResult {
   recommendation: Recommendation;
+  recommendation_2?: Recommendation;
   composite_image_url: string;
+  composite_image_url_2?: string;
   place_analysis: string;
   situation_text: string;
   person_description: string;
@@ -50,6 +52,7 @@ export default function RecommendationsPage() {
   const [placePreview, setPlacePreview] = useState<string | null>(null);
   const [generatingImage, setGeneratingImage] = useState(false);
   const [imageUrl, setImageUrl] = useState<string>("");
+  const [imageUrl2, setImageUrl2] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
@@ -97,6 +100,11 @@ export default function RecommendationsPage() {
       const isUsable = backendImg && !backendImg.includes("placehold") && !backendImg.startsWith("__");
       if (isUsable) {
         setImageUrl(backendImg.startsWith("http") ? backendImg : `${API}${backendImg}`);
+      }
+      // Second outfit image
+      const backendImg2 = parsed.composite_image_url_2 || "";
+      if (backendImg2 && !backendImg2.includes("placehold") && !backendImg2.startsWith("__")) {
+        setImageUrl2(backendImg2.startsWith("http") ? backendImg2 : `${API}${backendImg2}`);
       }
     } else {
       setError("No recommendation data found. Please describe your situation first.");
@@ -267,30 +275,51 @@ export default function RecommendationsPage() {
 
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-8">
 
-        {/* ── Hero: You in the Outfit ──────────────────────────────────────── */}
+        {/* ── Hero: Two Outfit Images ───────────────────────────────────────── */}
         <div className="flex flex-col items-center text-center gap-3">
-          <h1 className="text-3xl font-extrabold text-violet-700 tracking-tight">✨ You in the Outfit</h1>
+          <h1 className="text-3xl font-extrabold text-violet-700 tracking-tight">✨ Your Outfit Options</h1>
           <p className="text-slate-500 text-sm max-w-xl">{result.situation_text}</p>
 
-          {/* Big centered image */}
-          <div className="w-full max-w-sm relative">
-            {imageUrl && !imageUrl.includes("placehold.co") ? (
-              <div className="rounded-3xl overflow-hidden shadow-2xl border-4 border-violet-200 aspect-[3/4]">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={imageUrl} alt="You in the outfit" className="w-full h-full object-cover" />
-              </div>
-            ) : (
-              <div className="rounded-3xl border-4 border-dashed border-violet-300 aspect-[3/4] flex flex-col items-center justify-center gap-4 bg-violet-50">
-                <div className="w-14 h-14 border-4 border-violet-500 border-t-transparent rounded-full animate-spin" />
-                <p className="text-base font-semibold text-violet-600">
-                  {generatingImage ? "Generating your look…" : "Preparing…"}
-                </p>
-                <p className="text-xs text-slate-400">Placing you in the outfit at the venue</p>
+          {/* Two outfit images side by side */}
+          <div className="w-full flex flex-col sm:flex-row gap-5 justify-center">
+            {/* Outfit 1 */}
+            <div className="flex-1 max-w-xs mx-auto sm:mx-0">
+              <p className="text-xs font-bold text-violet-600 mb-2 uppercase tracking-widest">Option 1</p>
+              <p className="text-xs text-slate-500 mb-2">{result.recommendation?.title}</p>
+              {imageUrl && !imageUrl.includes("placehold.co") ? (
+                <div className="rounded-3xl overflow-hidden shadow-2xl border-4 border-violet-200 aspect-[3/4]">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={imageUrl} alt="Outfit option 1" className="w-full h-full object-cover" />
+                </div>
+              ) : (
+                <div className="rounded-3xl border-4 border-dashed border-violet-300 aspect-[3/4] flex flex-col items-center justify-center gap-4 bg-violet-50">
+                  <div className="w-14 h-14 border-4 border-violet-500 border-t-transparent rounded-full animate-spin" />
+                  <p className="text-sm font-semibold text-violet-600">{generatingImage ? "Generating look 1…" : "Preparing…"}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Outfit 2 */}
+            {result.recommendation_2 && Object.keys(result.recommendation_2).length > 0 && (
+              <div className="flex-1 max-w-xs mx-auto sm:mx-0">
+                <p className="text-xs font-bold text-indigo-600 mb-2 uppercase tracking-widest">Option 2</p>
+                <p className="text-xs text-slate-500 mb-2">{result.recommendation_2?.title}</p>
+                {imageUrl2 && !imageUrl2.includes("placehold.co") ? (
+                  <div className="rounded-3xl overflow-hidden shadow-2xl border-4 border-indigo-200 aspect-[3/4]">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={imageUrl2} alt="Outfit option 2" className="w-full h-full object-cover" />
+                  </div>
+                ) : (
+                  <div className="rounded-3xl border-4 border-dashed border-indigo-300 aspect-[3/4] flex flex-col items-center justify-center gap-4 bg-indigo-50">
+                    <div className="w-14 h-14 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                    <p className="text-sm font-semibold text-indigo-600">Generating look 2…</p>
+                  </div>
+                )}
               </div>
             )}
           </div>
 
-          {/* Feedback + Regenerate */}
+          {/* Feedback + Regenerate (Outfit 1) */}
           {imageUrl && !imageUrl.includes("placehold.co") && (
             <div className="w-full max-w-sm space-y-2">
               <div className="flex flex-col gap-1 text-left">
@@ -304,13 +333,11 @@ export default function RecommendationsPage() {
                 />
               </div>
               <Button onClick={generateImage} variant="outline" className="w-full" disabled={generatingImage}>
-                {generatingImage ? "Regenerating…" : "🔄 Regenerate"}
+                {generatingImage ? "Regenerating…" : "🔄 Regenerate Option 1"}
               </Button>
             </div>
           )}
         </div>
-
-        {/* ── Outfit details + Venue ─────────────────────────────────────────── */}
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
 
           {/* Left: venue */}
@@ -495,10 +522,11 @@ function ProductCard({ result: r }: { result: ShoppingResult }) {
       </div>
       {/* Info */}
       <div className="p-3 flex flex-col gap-1">
-        {r.for_item && <p className="text-xs text-slate-600 line-clamp-2 font-medium">{r.for_item}</p>}
+        {r.for_item && <p className="text-xs text-slate-700 line-clamp-2 font-medium">{r.for_item}</p>}
+        {r.name && r.name !== r.for_item && <p className="text-xs text-slate-500 line-clamp-1">{r.name}</p>}
         <div className="flex items-center justify-between gap-1 mt-auto pt-1">
-          <span className="text-xs font-semibold text-violet-600">{r.platform}</span>
-          <span className="text-xs bg-violet-100 text-violet-700 rounded-full px-2 py-0.5 font-medium">Shop →</span>
+          <span className="text-xs font-bold text-green-700">{r.price || ""}</span>
+          <span className="text-xs font-semibold text-violet-600">{r.platform} →</span>
         </div>
       </div>
     </a>
