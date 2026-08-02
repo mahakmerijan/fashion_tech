@@ -140,7 +140,8 @@ export default function QuestionnairePage() {
   };
 
   // ── Question handlers ────────────────────────────────────────────────────
-  const q = step > 0 ? QUESTIONS[step - 1] : null;
+  // step 0=style, step 1=price range, steps 2+ = QUESTIONS[step-2]
+  const q = step > 1 ? (QUESTIONS[step - 2] ?? null) : null;
   const current = q ? answers[q.key] : undefined;
 
   const toggle = (value: string) => {
