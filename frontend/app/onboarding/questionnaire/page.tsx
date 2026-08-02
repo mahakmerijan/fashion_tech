@@ -9,14 +9,24 @@ import { Badge } from "@/components/ui/badge";
 import { useUserStore } from "@/stores/user-store";
 import { updatePreferences } from "@/lib/api";
 
-type Step = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+type Step = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
-// ── Style Picker (Step 0) ─────────────────────────────────────────────────────
+// ── Style Picker (Step 0) ───────────────────────────────────────────────────
 const STYLES = [
   { value: "Street Style", key: "street" },
   { value: "Classic",      key: "classic" },
   { value: "Casual",       key: "casual" },
   { value: "Edgy",         key: "edgy" },
+];
+
+// ── Price Range Picker (Step 1) ────────────────────────────────────────────
+const PRICE_RANGES = [
+  { value: "Under ₹500",      label: "Under ₹500",       sub: "Budget-friendly" },
+  { value: "₹500–₹1,500",    label: "₹500 – ₹1,500",    sub: "Affordable everyday" },
+  { value: "₹1,500–₹3,000",  label: "₹1,500 – ₹3,000",  sub: "Mid-range quality" },
+  { value: "₹3,000–₹7,000",  label: "₹3,000 – ₹7,000",  sub: "Premium picks" },
+  { value: "₹7,000–₹15,000", label: "₹7,000 – ₹15,000", sub: "Luxury essentials" },
+  { value: "Above ₹15,000",   label: "Above ₹15,000",    sub: "High-end fashion" },
 ];
 
 // ── Preference Questions (Steps 1–6) ─────────────────────────────────────────
@@ -103,6 +113,8 @@ const QUESTIONS = [
       { value: "5", emoji: "🤩", desc: "Push every boundary" },
     ],
   },
+  // NOTE: budget is handled by the dedicated Price Range step (step 1)
+  // keeping the array clean — no budget question here
 ];
 
 export default function QuestionnairePage() {
@@ -114,6 +126,7 @@ export default function QuestionnairePage() {
   // step 0 = style picker, steps 1–6 = QUESTIONS[0–5]
   const [step, setStep] = useState<Step>(0);
   const [selectedStyles, setSelectedStyles] = useState<string[]>([]);
+  const [selectedBudget, setSelectedBudget] = useState<string>("");
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
   const [saving, setSaving] = useState(false);
 
@@ -151,17 +164,24 @@ export default function QuestionnairePage() {
 
   const handleNext = async () => {
     if (step === 0) {
-      // style picker → first question
+      // style picker → price range
       setAnswers((a) => ({ ...a, style_personality: selectedStyles.join(", ") }));
       setStep(1);
       return;
     }
-    if (step < QUESTIONS.length) {
+    if (step === 1) {
+      // price range → first question
+      setAnswers((a) => ({ ...a, budget: selectedBudget }));
+      setStep(2);
+      return;
+    }
+    if (step < QUESTIONS.length + 1) {
       setStep((s) => (s + 1) as Step);
     } else {
       setSaving(true);
       const prefs = {
         ...answers,
+        budget: answers.budget || selectedBudget,
         experiment_level: parseInt(answers.experiment_level as string || "3"),
       };
       setPreferences(prefs as Parameters<typeof setPreferences>[0]);
@@ -171,7 +191,7 @@ export default function QuestionnairePage() {
     }
   };
 
-  const totalSteps = QUESTIONS.length + 1; // +1 for style picker
+  const totalSteps = QUESTIONS.length + 2; // style picker + price range + questions
   const progress = 40 + Math.round((step / totalSteps) * 20);
 
   // ── Style Picker UI ────────────────────────────────────────────────────────
@@ -249,12 +269,75 @@ export default function QuestionnairePage() {
     );
   }
 
+  // ── Price Range Picker UI (Step 1) ────────────────────────────────────────
+  if (step === 1) {
+    return (
+      <div className="min-h-screen flex flex-col bg-[#0d0d1a]">
+        {/* Progress */}
+        <div className="px-6 pt-8 pb-4">
+          <div className="flex justify-between text-xs text-slate-400 mb-2">
+            <span>Step 3 of 5 · Price Range</span>
+            <span>42% complete</span>
+          </div>
+          <Progress value={42} />
+        </div>
+
+        {/* Header */}
+        <div className="px-6 pb-6 text-center">
+          <h1 className="text-2xl font-bold text-white leading-tight">
+            What&apos;s your shopping budget<br />per item?
+          </h1>
+          <p className="text-slate-400 text-sm mt-2">
+            We&apos;ll only recommend products within this price range
+          </p>
+        </div>
+
+        {/* Price options */}
+        <div className="flex-1 px-4 grid grid-cols-2 gap-3 max-w-lg mx-auto w-full pb-4">
+          {PRICE_RANGES.map((range) => {
+            const selected = selectedBudget === range.value;
+            return (
+              <button
+                key={range.value}
+                onClick={() => setSelectedBudget(range.value)}
+                className={`relative rounded-2xl px-4 py-6 flex flex-col items-center justify-center text-center transition-all border-2 ${
+                  selected
+                    ? "border-violet-500 bg-violet-900/40 scale-[0.97]"
+                    : "border-white/10 bg-white/5 hover:border-violet-400/50"
+                }`}
+              >
+                {selected && (
+                  <div className="absolute top-3 right-3 w-5 h-5 bg-violet-500 rounded-full flex items-center justify-center">
+                    <span className="text-white text-xs font-bold">✓</span>
+                  </div>
+                )}
+                <p className="text-white font-bold text-lg leading-tight">{range.label}</p>
+                <p className="text-slate-400 text-xs mt-1">{range.sub}</p>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Continue */}
+        <div className="px-4 py-6 max-w-lg mx-auto w-full">
+          <Button
+            onClick={handleNext}
+            disabled={!selectedBudget}
+            className="w-full h-14 text-base font-semibold tracking-widest uppercase rounded-2xl bg-violet-600 hover:bg-violet-700 disabled:bg-slate-700 disabled:text-slate-500"
+          >
+            CONTINUE
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   // ── Regular Question UI ────────────────────────────────────────────────────
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-gradient-to-br from-violet-50 to-indigo-100">
       <div className="w-full max-w-lg mb-8">
         <div className="flex justify-between text-xs text-slate-500 mb-2">
-          <span>Step 3 of 5 · Question {step}/{QUESTIONS.length}</span>
+          <span>Step 3 of 5 · Question {step - 1}/{QUESTIONS.length}</span>
           <span>{progress}% complete</span>
         </div>
         <Progress value={progress} />
@@ -307,7 +390,7 @@ export default function QuestionnairePage() {
               disabled={!canAdvanceQ || saving}
               className="flex-1"
             >
-              {saving ? "Saving…" : step === QUESTIONS.length ? "Continue to Wardrobe →" : "Next →"}
+              {saving ? "Saving…" : step === QUESTIONS.length + 1 ? "Continue to Wardrobe →" : "Next →"}
             </Button>
           </div>
         </CardContent>
