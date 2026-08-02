@@ -145,6 +145,54 @@ async def search_all_platforms(
     return results
 
 
+def _parse_budget_range(budget: str) -> tuple[int, int]:
+    """Parse budget string like '₹1,500–₹3,000' into (min, max) integers."""
+    import re
+    nums = [int(n.replace(",", "")) for n in re.findall(r"[\d,]+", budget)]
+    if len(nums) == 0:
+        return 0, 0
+    if len(nums) == 1:
+        # "Under ₹500" or "Above ₹15,000"
+        if "under" in budget.lower() or "below" in budget.lower():
+            return 0, nums[0]
+        return nums[0], 0   # 0 means no upper limit
+    return nums[0], nums[1]
+
+
+def _google_shopping_url(query: str, price_min: int = 0, price_max: int = 0, country: str = "in") -> str:
+    """
+    Build a Google Shopping URL for India.
+    Price filters use the tbs parameter: ppr_min / ppr_max (prices in INR).
+    These are 100% real, always-working search links.
+    """
+    import urllib.parse
+    q = urllib.parse.quote_plus(query + " India buy online")
+    tbs_parts = ["mr:1"]
+    if price_min > 0 or price_max > 0:
+        tbs_parts.append("price:1")
+        if price_min > 0:
+            tbs_parts.append(f"ppr_min:{price_min}")
+        if price_max > 0:
+            tbs_parts.append(f"ppr_max:{price_max}")
+    tbs = ",".join(tbs_parts)
+    return f"https://www.google.com/search?q={q}&tbm=shop&tbs={tbs}&hl=en&gl={country}"
+
+
+def _platform_shopping_url(query: str, platform: str, gender: str = "men") -> str:
+    """Build platform-specific search URL using the specific product query."""
+    import urllib.parse
+    q_plus = urllib.parse.quote_plus(query)
+    q_dash = query.replace(" ", "-").lower()
+    if platform == "Myntra":
+        return f"https://www.myntra.com/{gender}/{q_dash}?rawQuery={q_plus}&sort=popularity"
+    if platform == "Flipkart":
+        return f"https://www.flipkart.com/search?q={q_plus}&sort=relevance"
+    if platform == "AJIO":
+        return f"https://www.ajio.com/search/?text={q_plus}&gender={gender}"
+    # Amazon
+    return f"https://www.amazon.in/s?k={q_plus}&i=apparel&rh=n:1968024031"
+
+
 async def get_specific_product_links(
     missing_items: list[dict],
     budget: str = "",
@@ -153,8 +201,8 @@ async def get_specific_product_links(
     situation: str = "",
 ) -> list[dict]:
     """
-    Use Gemini to identify 2 specific real products per missing item,
-    complete with realistic product deep-links within the user's budget.
+    Use Gemini to get specific product names, then build Google Shopping URLs
+    with exact price-range filters — guaranteed real links that always work.
     """
     import json as _json
     from app.services.image_generator import get_client
@@ -163,54 +211,50 @@ async def get_specific_product_links(
     if not missing_items:
         return []
 
-    budget_note = f"User's budget: {budget} per item." if budget else ""
+    price_min, price_max = _parse_budget_range(budget) if budget else (0, 0)
     gender_word = "women" if gender == "women" else "men"
-    skin_note = f"User's skin tone: {skin_tone}. Suggest colours that complement this tone." if skin_tone else ""
+    skin_note = f"Skin tone: {skin_tone} — suggest complementary colours." if skin_tone else ""
 
     items_text = "\n".join(
         f"- {i.get('color', '')} {i.get('description', i.get('category', ''))} (category: {i.get('category', '')})"
         for i in missing_items
     )
 
-    prompt = f"""You are a fashion product expert for Indian e-commerce (2024-2025 catalog).
+    budget_instruction = (
+        f"Budget: STRICTLY {budget} per item — suggest only products in this price range."
+        if budget else "No budget constraint."
+    )
 
-The user needs to buy ONLY these specific missing items to complete their outfit for: {situation}.
+    prompt = f"""You are a fashion expert for Indian e-commerce.
+
+The user needs these items for: {situation}
 Gender: {gender_word}
 {skin_note}
+{budget_instruction}
 
-STRICT BUDGET RULE: {f"User's budget is STRICTLY {budget} per item. Do NOT suggest products outside this price range. This is mandatory." if budget else "No budget constraint."}
-
-Items the user needs to buy (NOT already in their wardrobe):
+Items needed (NOT in their wardrobe):
 {items_text}
 
-For EACH item above, provide EXACTLY 2 specific real product recommendations from Indian fashion e-commerce.
-You MUST provide direct product page URLs, NOT search result pages.
+For EACH item, suggest EXACTLY 2 specific, real products available in India.
+Include the brand name and specific product model/style/colour.
 
-EXACT URL FORMATS (use product-specific paths, not search pages):
-- Amazon India product page: https://www.amazon.in/BRAND-Product-Name-Color/dp/ACTUAL_ASIN
-- Flipkart product page: https://www.flipkart.com/brand-product-name/p/ACTUAL_ITEM_ID
-- Myntra product page: https://www.myntra.com/CATEGORY/BRAND/PRODUCT-NAME-COLOR-SIZE/PRODUCT_ID/buy
-- AJIO product page: https://www.ajio.com/brand-product-name/p/PRODUCT_CODE
-
-Use real product IDs/ASINs you know from training data for popular Indian fashion brands.
-Brands to consider: Levis, Wrangler, WROGN, Jack & Jones, H&M, Mango, Zara, W, Global Desi, Biba, Fabindia, UCB, Roadster, HRX, Campus, Puma, Nike, Louis Philippe, Van Heusen, Arrow, Peter England, Raymond.
-
-{f"PRICE FILTER — MANDATORY: All suggested products MUST be priced within {budget}. Reject any product outside this range." if budget else ""}
-
-Return ONLY a valid JSON array with ALL items (2 products per missing item, so {len(missing_items) * 2} total entries):
+Return ONLY a JSON array ({len(missing_items) * 2} entries total, 2 per item):
 [
   {{
-    "for_item": "exact description of the missing item this product satisfies",
-    "name": "Brand Model Name — Color",
+    "for_item": "exact description of the item this satisfies",
+    "brand": "Brand Name",
+    "product_name": "Specific product model name with colour",
     "estimated_price": "\u20b9X,XXX",
-    "platform": "Amazon|Flipkart|Myntra|AJIO",
-    "url": "https://www.PLATFORM.com/actual-product-path/dp/ACTUAL_ID_OR_CODE",
-    "from_image": true
+    "search_query": "brand + product name + colour + gender — specific enough to find this exact item on any shopping site",
+    "platform": "Myntra|Flipkart|Amazon|AJIO"
   }}
 ]
 
-IMPORTANT: Return ONLY the JSON array. Include 2 products for EVERY item in the list above."""
+Be SPECIFIC. Instead of 'navy jeans', write 'Levis 511 Slim Fit Navy Stretch Jeans Men'.
+{f"Price MUST be within {budget}." if budget else ""}
+Return ONLY the JSON array."""
 
+    results = []
     try:
         client = get_client()
         resp = client.models.generate_content(
@@ -219,26 +263,49 @@ IMPORTANT: Return ONLY the JSON array. Include 2 products for EVERY item in the 
             config=gtypes.GenerateContentConfig(
                 response_mime_type="application/json",
                 temperature=0.2,
-                max_output_tokens=1500,
+                max_output_tokens=1200,
             ),
         )
         products = _json.loads(resp.text)
         if not isinstance(products, list):
             products = []
 
-        # Normalize results
-        results = []
         for p in products:
-            results.append({
-                "name": p.get("name", ""),
-                "price": p.get("estimated_price", ""),
-                "url": p.get("url", ""),
-                "image_url": "",
-                "platform": p.get("platform", ""),
-                "for_item": p.get("for_item", ""),
-                "from_image": True,
-            })
-        return results
+            search_q = p.get("search_query") or f"{p.get('brand','')} {p.get('product_name','')}".strip()
+            platform = p.get("platform", "Google Shopping")
+
+            # Primary: Google Shopping with price filter (100% real link)
+            google_url = _google_shopping_url(search_q, price_min, price_max)
+
+            # Secondary: platform-specific filtered search
+            platform_url = _platform_shopping_url(search_q, platform, gender_word)
+
+            # Return Google Shopping as primary (guaranteed) + platform as secondary
+            for url, plat in [(google_url, "Google Shopping"), (platform_url, platform)]:
+                results.append({
+                    "name": f"{p.get('brand','')} — {p.get('product_name','')}".strip(" —"),
+                    "price": p.get("estimated_price", ""),
+                    "url": url,
+                    "image_url": "",
+                    "platform": plat,
+                    "for_item": p.get("for_item", ""),
+                    "from_image": True,
+                })
+
     except Exception as e:
         logger.error("get_specific_product_links failed: %s", e)
-        return []
+        # Fallback: build Google Shopping URLs directly from item descriptions
+        for item in missing_items:
+            query = f"{item.get('color','')} {item.get('description', item.get('category',''))} {gender_word} India"
+            google_url = _google_shopping_url(query.strip(), price_min, price_max)
+            results.append({
+                "name": item.get("description", item.get("category", "Product")),
+                "price": budget or "",
+                "url": google_url,
+                "image_url": "",
+                "platform": "Google Shopping",
+                "for_item": item.get("description", ""),
+                "from_image": True,
+            })
+
+    return results

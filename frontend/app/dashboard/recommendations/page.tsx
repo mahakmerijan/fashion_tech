@@ -501,10 +501,12 @@ function ProductCard({ result: r }: { result: ShoppingResult }) {
       {/* Info */}
       <div className="p-3 flex flex-col gap-1">
         {r.for_item && <p className="text-xs text-slate-700 line-clamp-2 font-medium">{r.for_item}</p>}
-        {r.name && r.name !== r.for_item && <p className="text-xs text-slate-500 line-clamp-1">{r.name}</p>}
+        {r.name && r.name !== r.for_item && <p className="text-xs text-slate-500 line-clamp-1 italic">{r.name}</p>}
         <div className="flex items-center justify-between gap-1 mt-auto pt-1">
           <span className="text-xs font-bold text-green-700">{r.price || ""}</span>
-          <span className="text-xs font-semibold text-violet-600">{r.platform} →</span>
+          <span className={`text-xs font-semibold rounded-full px-2 py-0.5 ${r.platform === "Google Shopping" ? "bg-blue-100 text-blue-700" : "text-violet-600"}`}>
+            {r.platform} →
+          </span>
         </div>
       </div>
     </a>
