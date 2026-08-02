@@ -129,107 +129,86 @@ export default function RecommendationsPage() {
 
       // ── Face profile from localStorage ───────────────────────────────────
       let faceProfile: Record<string, string> = {};
+      let genderForDetect = "men";
+      const storeRaw = localStorage.getItem("fashion-tech-user");
       try {
-        const raw = localStorage.getItem("fashion-tech-user");
-        if (raw) {
-          const parsed = JSON.parse(raw);
+        if (storeRaw) {
+          const parsed = JSON.parse(storeRaw);
           faceProfile = parsed?.faceProfile || parsed?.state?.faceProfile || {};
-          // Inject gender so backend uses correct subject in the image prompt
           const pref = parsed?.preferences || parsed?.state?.preferences || {};
           if (pref.gender) faceProfile = { ...faceProfile, gender: pref.gender };
+          genderForDetect = (pref.gender || "men").toLowerCase() === "female" ? "women" : "men";
         }
       } catch { /* ignore */ }
 
-      // ── Build request body ────────────────────────────────────────────────
       const selfieB64 = localStorage.getItem("selfie_b64") || undefined;
       const placeB64 = sessionStorage.getItem("place_image_b64") || undefined;
-      const storeRaw = localStorage.getItem("fashion-tech-user");
       const storedUserId = storeRaw ? (JSON.parse(storeRaw)?.userId || JSON.parse(storeRaw)?.state?.userId || "anonymous") : "anonymous";
-      const body = {
-        outfit_id: result.recommendation?.outfit_id || crypto.randomUUID(),
+      const wardrobeItems = storeRaw ? (JSON.parse(storeRaw)?.wardrobe || JSON.parse(storeRaw)?.state?.wardrobe || []) : [];
+
+      const makeBody = (rec: Recommendation | undefined, feedback?: string) => ({
+        outfit_id: rec?.outfit_id || crypto.randomUUID(),
         user_id: storedUserId,
-        items: (result.recommendation?.items || []).map((i) => ({
-          item_id: i.item_id || crypto.randomUUID(),
-          category: i.category,
-          description: i.description,
-          color: i.color,
-        })),
+        items: (rec?.items || []).map((i) => ({ item_id: i.item_id || crypto.randomUUID(), category: i.category, description: i.description, color: i.color })),
         face_profile: faceProfile,
         occasion: sessionStorage.getItem("situation_text") || "Casual",
         selfie_b64: selfieB64,
         place_b64: placeB64,
-        user_feedback: feedbackRef.current.trim() || undefined,
+        user_feedback: feedback?.trim() || undefined,
+      });
+
+      const handleImageResult = (data: { image_url: string }, setter: (url: string) => void) => {
+        if (data.image_url && !data.image_url.includes("placehold")) {
+          const url = data.image_url.startsWith("http") ? data.image_url : `${API}${data.image_url}`;
+          setter(url);
+          const staticPath = data.image_url.startsWith("/static/") ? data.image_url : null;
+          if (staticPath) {
+            const budgetForShop = storeRaw ? (JSON.parse(storeRaw)?.preferences?.budget || JSON.parse(storeRaw)?.state?.preferences?.budget || "") : "";
+            fetch(`${API}/api/products/detect-from-image`, {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ image_url: staticPath, wardrobe: wardrobeItems, gender: genderForDetect, budget: budgetForShop }),
+            }).then(r => r.json()).then(d => {
+              if (d.items?.length) setFeedbackShoppingResults(prev => {
+                const urls = new Set(prev.map(x => x.url));
+                const fresh = d.items.filter((x: ShoppingResult) => !urls.has(x.url));
+                if (!fresh.length) return prev;
+                const next = [...prev, ...fresh];
+                try { sessionStorage.setItem("feedback_shopping", JSON.stringify(next)); } catch {}
+                return next;
+              });
+            }).catch(() => {});
+          }
+        }
       };
 
-      const res = await fetch(`${API}/api/images/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json() as { image_url: string };
-      if (data.image_url && !data.image_url.includes("placehold")) {
-        // Prefix relative /static/... URLs with the backend base URL
-        const url = data.image_url.startsWith("http")
-          ? data.image_url
-          : `${API}${data.image_url}`;
-        setImageUrl(url);
+      const currentFeedback = feedbackRef.current.trim();
 
-        // After every image generation: detect items in the image not in wardrobe
-        const staticPath = data.image_url.startsWith("/static/") ? data.image_url : null;
-        const storeRawForDetect = localStorage.getItem("fashion-tech-user");
-        const wardrobeItems = storeRawForDetect
-          ? (JSON.parse(storeRawForDetect)?.wardrobe || JSON.parse(storeRawForDetect)?.state?.wardrobe || [])
-          : [];
-        const genderForDetect = storeRawForDetect
-          ? ((JSON.parse(storeRawForDetect)?.preferences?.gender || JSON.parse(storeRawForDetect)?.state?.preferences?.gender || "men")).toLowerCase() === "female" ? "women" : "men"
-          : "men";
+      // Generate BOTH outfits in parallel
+      const [res1, res2] = await Promise.all([
+        fetch(`${API}/api/images/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(makeBody(result.recommendation, currentFeedback)) }),
+        result.recommendation_2 && Object.keys(result.recommendation_2).length > 0
+          ? fetch(`${API}/api/images/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(makeBody(result.recommendation_2, currentFeedback)) })
+          : Promise.resolve(null),
+      ]);
 
-        if (staticPath) {
-          fetch(`${API}/api/products/detect-from-image`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ image_url: staticPath, wardrobe: wardrobeItems, gender: genderForDetect }),
-          })
-            .then((r) => r.json())
-            .then((d) => {
-              if (d.items?.length) {
-                setFeedbackShoppingResults((prev) => {
-                  const existingUrls = new Set(prev.map((x) => x.url));
-                  const fresh = d.items.filter((x: ShoppingResult) => !existingUrls.has(x.url));
-                  if (!fresh.length) return prev;
-                  const next = [...prev, ...fresh];
-                  try { sessionStorage.setItem("feedback_shopping", JSON.stringify(next)); } catch {}
-                  return next;
-                });
-              }
-            })
-            .catch(() => {/* non-critical */});
-        }
+      if (res1.ok) { const d = await res1.json(); handleImageResult(d, setImageUrl); }
+      if (res2 && res2.ok) { const d = await res2.json(); handleImageResult(d, setImageUrl2); }
 
-        // Also extract items from feedback text if any
-        const currentFeedback = feedbackRef.current.trim();
-        if (currentFeedback) {
-          fetch(`${API}/api/products/from-feedback`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ feedback: currentFeedback, gender: genderForDetect }),
-          })
-            .then((r) => r.json())
-            .then((d) => {
-              if (d.items?.length) {
-                setFeedbackShoppingResults((prev) => {
-                  const existingUrls = new Set(prev.map((x) => x.url));
-                  const fresh = d.items.filter((x: ShoppingResult) => !existingUrls.has(x.url));
-                  if (!fresh.length) return prev;
-                  const next = [...prev, ...fresh];
-                  try { sessionStorage.setItem("feedback_shopping", JSON.stringify(next)); } catch {}
-                  return next;
-                });
-              }
-            })
-            .catch(() => {/* non-critical */});
-        }
+      // Extract items from feedback text
+      if (currentFeedback) {
+        fetch(`${API}/api/products/from-feedback`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ feedback: currentFeedback, gender: genderForDetect }),
+        }).then(r => r.json()).then(d => {
+          if (d.items?.length) setFeedbackShoppingResults(prev => {
+            const urls = new Set(prev.map(x => x.url));
+            const fresh = d.items.filter((x: ShoppingResult) => !urls.has(x.url));
+            if (!fresh.length) return prev;
+            const next = [...prev, ...fresh];
+            try { sessionStorage.setItem("feedback_shopping", JSON.stringify(next)); } catch {}
+            return next;
+          });
+        }).catch(() => {});
       }
     } catch (e) {
       console.error("Image generation failed:", e);
@@ -333,7 +312,7 @@ export default function RecommendationsPage() {
                 />
               </div>
               <Button onClick={generateImage} variant="outline" className="w-full" disabled={generatingImage}>
-                {generatingImage ? "Regenerating…" : "🔄 Regenerate Option 1"}
+                {generatingImage ? "Regenerating both looks…" : "🔄 Regenerate Options"}
               </Button>
             </div>
           )}
@@ -441,7 +420,6 @@ export default function RecommendationsPage() {
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
                 {result.shopping_results
                   .filter((r: ShoppingResult) => !isInWardrobe(r.for_item || ""))
-                  .slice(0, 8)
                   .map((r: ShoppingResult, i: number) => (
                     <ProductCard key={i} result={r} />
                   ))}

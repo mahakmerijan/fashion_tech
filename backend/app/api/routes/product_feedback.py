@@ -24,12 +24,14 @@ logger = logging.getLogger(__name__)
 class FeedbackShoppingRequest(BaseModel):
     feedback: str
     gender: Optional[str] = "men"
+    budget: Optional[str] = ""
 
 
 class DetectFromImageRequest(BaseModel):
     image_url: str
     wardrobe: list[dict] = []
     gender: Optional[str] = "men"
+    budget: Optional[str] = ""
 
 
 @router_feedback.post("/from-feedback")
@@ -141,16 +143,27 @@ Return [] if all visible items match the wardrobe. Return ONLY the JSON array.""
     if not detected:
         return {"items": [], "detected": []}
 
-    all_results = []
-    for item in detected[:4]:
-        category = item.get("category", "clothing")
-        description = item.get("description", "")
-        color = item.get("color", "")
-        results = await search_all_platforms(category=category, color=color, fit="regular",
-                                              gender=gender_str, description=description)
-        for r in results:
-            r["for_item"] = description
-            r["from_image"] = True
-        all_results.extend(results)
+    # Use Gemini-powered specific product links for all detected items
+    try:
+        from app.services.shopping_aggregator import get_specific_product_links
+        budget = body.budget or ""
+        all_results = await get_specific_product_links(
+            missing_items=detected,
+            budget=budget,
+            gender=gender_str,
+            situation="outfit shown in generated fashion image",
+        )
+    except Exception as e:
+        logger.error("Product links failed, falling back: %s", e)
+        all_results = []
+        for item in detected:
+            from app.services.shopping_aggregator import search_all_platforms
+            results = await search_all_platforms(
+                category=item.get("category", "clothing"), color=item.get("color", ""),
+                fit="regular", gender=gender_str, description=item.get("description", ""))
+            for r in results:
+                r["for_item"] = item.get("description", "")
+                r["from_image"] = True
+            all_results.extend(results)
 
     return {"items": all_results, "detected": detected}

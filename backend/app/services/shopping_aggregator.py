@@ -172,42 +172,44 @@ async def get_specific_product_links(
         for i in missing_items
     )
 
-    prompt = f"""You are a fashion shopping assistant for Indian e-commerce.
+    prompt = f"""You are a fashion product expert for Indian e-commerce (2024-2025 catalog).
 
-The user needs to buy these specific items to complete their outfit for: {situation}.
-{budget_note}
-{skin_note}
+The user needs to buy ONLY these specific missing items to complete their outfit for: {situation}.
 Gender: {gender_word}
+{skin_note}
 
-Items needed:
+STRICT BUDGET RULE: {f"User's budget is STRICTLY {budget} per item. Do NOT suggest products outside this price range. This is mandatory." if budget else "No budget constraint."}
+
+Items the user needs to buy (NOT already in their wardrobe):
 {items_text}
 
-For EACH item, suggest exactly 2 specific real products available on Indian e-commerce platforms.
-Choose from: Amazon India, Flipkart, Myntra, AJIO.
-{'Keep prices within ' + budget + '.' if budget else ''}
+For EACH item above, provide EXACTLY 2 specific real product recommendations from Indian fashion e-commerce.
+You MUST provide direct product page URLs, NOT search result pages.
 
-IMPORTANT URL FORMAT RULES:
-- Amazon: https://www.amazon.in/s?k=PRODUCT+NAME+IN+PLUS+SIGNS&i=apparel
-- Flipkart: https://www.flipkart.com/search?q=PRODUCT+NAME&sort=relevance  
-- Myntra: https://www.myntra.com/CATEGORY?rawQuery=PRODUCT+NAME
-- AJIO: https://www.ajio.com/search/?text=PRODUCT+NAME&gender={gender_word}
+EXACT URL FORMATS (use product-specific paths, not search pages):
+- Amazon India product page: https://www.amazon.in/BRAND-Product-Name-Color/dp/ACTUAL_ASIN
+- Flipkart product page: https://www.flipkart.com/brand-product-name/p/ACTUAL_ITEM_ID
+- Myntra product page: https://www.myntra.com/CATEGORY/BRAND/PRODUCT-NAME-COLOR-SIZE/PRODUCT_ID/buy
+- AJIO product page: https://www.ajio.com/brand-product-name/p/PRODUCT_CODE
 
-Use the ACTUAL product name (brand + model/style + color) in the URL, not generic terms.
-Example for "navy slim jeans": use "levis-511-slim-navy-jeans" or "wrogn-slim-fit-navy-jeans"
+Use real product IDs/ASINs you know from training data for popular Indian fashion brands.
+Brands to consider: Levis, Wrangler, WROGN, Jack & Jones, H&M, Mango, Zara, W, Global Desi, Biba, Fabindia, UCB, Roadster, HRX, Campus, Puma, Nike, Louis Philippe, Van Heusen, Arrow, Peter England, Raymond.
 
-Return ONLY a valid JSON array:
+{f"PRICE FILTER — MANDATORY: All suggested products MUST be priced within {budget}. Reject any product outside this range." if budget else ""}
+
+Return ONLY a valid JSON array with ALL items (2 products per missing item, so {len(missing_items) * 2} total entries):
 [
   {{
-    "for_item": "exact description of the item being recommended for",
-    "name": "Brand + Product Name",
-    "estimated_price": "₹X,XXX",
+    "for_item": "exact description of the missing item this product satisfies",
+    "name": "Brand Model Name — Color",
+    "estimated_price": "\u20b9X,XXX",
     "platform": "Amazon|Flipkart|Myntra|AJIO",
-    "url": "specific deep-link URL",
+    "url": "https://www.PLATFORM.com/actual-product-path/dp/ACTUAL_ID_OR_CODE",
     "from_image": true
   }}
 ]
 
-Return ONLY the JSON array, 2 products per missing item."""
+IMPORTANT: Return ONLY the JSON array. Include 2 products for EVERY item in the list above."""
 
     try:
         client = get_client()
