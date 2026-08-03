@@ -13,11 +13,89 @@ Strategy:
 
 import asyncio
 import logging
+import re
 from typing import Optional
 import httpx
 
 from app.core.config import get_settings
 from app.services.cache_service import cache_get, cache_set, retail_search_key
+
+settings = get_settings()
+logger = logging.getLogger(__name__)
+
+# ─── Scraper helpers ──────────────────────────────────────────────────────────
+
+_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept-Language": "en-IN,en;q=0.9",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+}
+
+
+async def _fetch_first_amazon_product(query: str, price_min: int = 0, price_max: int = 0) -> Optional[dict]:
+    """Fetch Amazon India search results and return the first product page URL."""
+    import urllib.parse
+    q = urllib.parse.quote_plus(query)
+    price_param = ""
+    if price_min or price_max:
+        lo = price_min * 100 if price_min else 100
+        hi = price_max * 100 if price_max else 9999999
+        price_param = f"&rh=p_36%3A{lo}-{hi}"
+    url = f"https://www.amazon.in/s?k={q}&i=apparel{price_param}"
+    try:
+        async with httpx.AsyncClient(timeout=8, follow_redirects=True, headers=_HEADERS) as client:
+            r = await client.get(url)
+            if r.status_code != 200:
+                return None
+            html = r.text
+            # Extract first product ASIN link
+            matches = re.findall(r'href="(/[^"]*?/dp/[A-Z0-9]{10}[^"]*?)"', html)
+            if matches:
+                clean = matches[0].split("?")[0].split("%3F")[0]
+                product_url = "https://www.amazon.in" + clean
+                # Extract title if possible
+                title_match = re.search(r'aria-label="([^"]{10,80})"[^>]*?class="[^"]*s-link-style', html)
+                title = title_match.group(1) if title_match else query
+                # Extract price if possible
+                price_match = re.search(r'class="a-price-whole">([0-9,]+)', html)
+                price_str = f"₹{price_match.group(1)}" if price_match else ""
+                return {"url": product_url, "name": title, "price": price_str, "platform": "Amazon"}
+    except Exception as e:
+        logger.warning("Amazon scrape failed: %s", e)
+    return None
+
+
+async def _fetch_first_flipkart_product(query: str, price_min: int = 0, price_max: int = 0) -> Optional[dict]:
+    """Fetch Flipkart search results and return the first product page URL."""
+    import urllib.parse
+    q = urllib.parse.quote_plus(query)
+    price_param = ""
+    if price_min or price_max:
+        price_param = f"&p[]=facets.price_range.from%3D{price_min}&p[]=facets.price_range.to%3D{price_max}"
+    url = f"https://www.flipkart.com/search?q={q}&sort=relevance{price_param}"
+    try:
+        async with httpx.AsyncClient(timeout=8, follow_redirects=True, headers=_HEADERS) as client:
+            r = await client.get(url)
+            if r.status_code != 200:
+                return None
+            html = r.text
+            # Extract product page link (pattern: /brand/product/p/itm...)
+            matches = re.findall(r'"(/[a-z0-9\-]+(?:/[a-z0-9\-]+)*/p/itm[a-z0-9]+)"', html)
+            if not matches:
+                # Alternative pattern
+                matches = re.findall(r'href="(/[^"]+/p/[A-Za-z0-9]+)"', html)
+            if matches:
+                product_url = "https://www.flipkart.com" + matches[0]
+                title_match = re.search(r'"name"\s*:\s*"([^"]{10,80})"', html)
+                title = title_match.group(1) if title_match else query
+                price_match = re.search(r'"₹([0-9,]+)"', html)
+                if not price_match:
+                    price_match = re.search(r'class="[^"]*_30jeq3[^"]*">₹([0-9,]+)', html)
+                price_str = f"₹{price_match.group(1)}" if price_match else ""
+                return {"url": product_url, "name": title, "price": price_str, "platform": "Flipkart"}
+    except Exception as e:
+        logger.warning("Flipkart scrape failed: %s", e)
+    return None
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -241,23 +319,26 @@ Gender: {gender_word}
 Items needed (NOT in their wardrobe):
 {items_text}
 
-For EACH item, suggest EXACTLY 2 specific, real products available in India.
-Include the brand name and specific product model/style/colour.
+For EACH item, suggest EXACTLY 2 specific, real products available on Amazon India or Flipkart.
+Include the brand name and exact product model/style/colour.
 
 Return ONLY a JSON array ({len(missing_items) * 2} entries total, 2 per item):
 [
   {{
     "for_item": "exact description of the item this satisfies",
-    "brand": "Brand Name",
-    "product_name": "Specific product model name with colour",
+    "brand": "Brand Name (e.g. Levis, HRX, Wrogn, Jack & Jones, Roadster, Adidas)",
+    "product_name": "Exact model name with colour (e.g. 511 Slim Fit Mid-Rise Navy Stretch Jeans)",
     "estimated_price": "\u20b9X,XXX",
-    "search_query": "brand + product name + colour + gender — specific enough to find this exact item on any shopping site",
-    "platform": "Myntra|Flipkart|Amazon|AJIO"
+    "search_query": "Brand + exact model name + colour + gender — specific enough to find THIS product on Amazon/Flipkart",
+    "platform": "Amazon|Flipkart"
   }}
 ]
 
-Be SPECIFIC. Instead of 'navy jeans', write 'Levis 511 Slim Fit Navy Stretch Jeans Men'.
-{f"Price MUST be within {budget}." if budget else ""}
+STRICT RULES:
+- Use ONLY Amazon India or Flipkart
+- Be VERY SPECIFIC: 'Levis 511 Slim Fit Navy Stretch Jeans Men' NOT 'blue jeans'
+- The search_query must find this EXACT product, not 100s of results
+{f"- Price MUST be within {budget}" if budget else ""}
 Return ONLY the JSON array."""
 
     results = []
@@ -278,22 +359,43 @@ Return ONLY the JSON array."""
 
         for p in products:
             search_q = p.get("search_query") or f"{p.get('brand','')} {p.get('product_name','')}".strip()
-            platform = p.get("platform", "Myntra")
-            name = f"{p.get('brand','')} — {p.get('product_name','')}".strip(" —")
+            platform = p.get("platform", "Amazon")
+            name = f"{p.get('brand','')} — {p.get('product_name','')}".strip(" —") or search_q
             price_str = p.get("estimated_price", "")
+            for_item = p.get("for_item", "")
 
-            # Primary: platform-specific price-filtered search
-            platform_url = _platform_shopping_url(search_q, platform, gender_word, price_min, price_max)
+            # Try to scrape the actual product page URL
+            scraped = None
+            try:
+                if "amazon" in platform.lower():
+                    scraped = await _fetch_first_amazon_product(search_q, price_min, price_max)
+                elif "flipkart" in platform.lower():
+                    scraped = await _fetch_first_flipkart_product(search_q, price_min, price_max)
+            except Exception:
+                pass
 
-            results.append({
-                "name": name,
-                "price": price_str,
-                "url": platform_url,
-                "image_url": "",
-                "platform": platform,
-                "for_item": p.get("for_item", ""),
-                "from_image": True,
-            })
+            if scraped:
+                results.append({
+                    "name": scraped.get("name", name),
+                    "price": scraped.get("price") or price_str,
+                    "url": scraped["url"],
+                    "image_url": "",
+                    "platform": scraped["platform"],
+                    "for_item": for_item,
+                    "from_image": True,
+                })
+            else:
+                # Fallback: price-filtered platform search
+                fallback_url = _platform_shopping_url(search_q, platform, gender_word, price_min, price_max)
+                results.append({
+                    "name": name,
+                    "price": price_str,
+                    "url": fallback_url,
+                    "image_url": "",
+                    "platform": platform,
+                    "for_item": for_item,
+                    "from_image": True,
+                })
 
     except Exception as e:
         logger.error("get_specific_product_links failed: %s", e)
