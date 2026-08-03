@@ -33,69 +33,89 @@ _HEADERS = {
 
 
 async def _fetch_first_amazon_product(query: str, price_min: int = 0, price_max: int = 0) -> Optional[dict]:
-    """Fetch Amazon India search results and return the first product page URL."""
+    """Search Bing Shopping and extract the first Amazon India product page URL."""
     import urllib.parse
-    q = urllib.parse.quote_plus(query)
-    price_param = ""
+    q = urllib.parse.quote_plus(f"{query} site:amazon.in")
+    # Bing price filter: &filters=price:"min_max"
+    price_filter = ""
     if price_min or price_max:
-        lo = price_min * 100 if price_min else 100
-        hi = price_max * 100 if price_max else 9999999
-        price_param = f"&rh=p_36%3A{lo}-{hi}"
-    url = f"https://www.amazon.in/s?k={q}&i=apparel{price_param}"
+        lo = price_min or 0
+        hi = price_max or 99999
+        price_filter = f'&filters=price:"{lo}_{hi}"'
+    url = f"https://www.bing.com/shop?q={q}&mkt=en-IN{price_filter}"
     try:
-        async with httpx.AsyncClient(timeout=8, follow_redirects=True, headers=_HEADERS) as client:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True, headers=_HEADERS) as client:
             r = await client.get(url)
-            if r.status_code != 200:
-                return None
             html = r.text
-            # Extract first product ASIN link
-            matches = re.findall(r'href="(/[^"]*?/dp/[A-Z0-9]{10}[^"]*?)"', html)
+            # Bing Shopping embeds actual Amazon product URLs directly in the HTML
+            matches = re.findall(
+                r'https?://(?:www\.)?amazon\.in(?:/[^"\'>\s]+)?/dp/([A-Z0-9]{10})(?:[^"\'>\s]*)?',
+                html
+            )
             if matches:
-                clean = matches[0].split("?")[0].split("%3F")[0]
-                product_url = "https://www.amazon.in" + clean
-                # Extract title if possible
-                title_match = re.search(r'aria-label="([^"]{10,80})"[^>]*?class="[^"]*s-link-style', html)
-                title = title_match.group(1) if title_match else query
-                # Extract price if possible
-                price_match = re.search(r'class="a-price-whole">([0-9,]+)', html)
+                asin = matches[0]
+                product_url = f"https://www.amazon.in/dp/{asin}"
+                # Try to get title
+                title_match = re.search(r'<a[^>]+href="[^"]*amazon\.in[^"]*"[^>]*>([^<]{10,80})</a>', html)
+                title = title_match.group(1).strip() if title_match else query
+                # Try to get price
+                price_match = re.search(r'[₹\$]([0-9,]{3,8})', html)
                 price_str = f"₹{price_match.group(1)}" if price_match else ""
+                logger.info("Found Amazon product: %s", product_url)
                 return {"url": product_url, "name": title, "price": price_str, "platform": "Amazon"}
     except Exception as e:
-        logger.warning("Amazon scrape failed: %s", e)
-    return None
+        logger.warning("Bing→Amazon scrape failed: %s", e)
+
+    # Fallback: direct Amazon search with price filter
+    import urllib.parse as _up
+    q2 = _up.quote_plus(f'"{query}"')
+    price_param = f"&rh=p_36%3A{price_min*100}-{price_max*100}" if (price_min or price_max) else ""
+    return {"url": f"https://www.amazon.in/s?k={q2}&i=apparel{price_param}", "name": query, "price": "", "platform": "Amazon"}
 
 
 async def _fetch_first_flipkart_product(query: str, price_min: int = 0, price_max: int = 0) -> Optional[dict]:
-    """Fetch Flipkart search results and return the first product page URL."""
+    """Search Bing Shopping and extract the first Flipkart product page URL."""
     import urllib.parse
-    q = urllib.parse.quote_plus(query)
+    q = urllib.parse.quote_plus(f"{query} site:flipkart.com")
+    price_filter = ""
+    if price_min or price_max:
+        lo = price_min or 0
+        hi = price_max or 99999
+        price_filter = f'&filters=price:"{lo}_{hi}"'
+    url = f"https://www.bing.com/shop?q={q}&mkt=en-IN{price_filter}"
+    try:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True, headers=_HEADERS) as client:
+            r = await client.get(url)
+            html = r.text
+            # Extract Flipkart product page links (pattern: /brand/product/p/itm...)
+            matches = re.findall(
+                r'https?://(?:www\.)?flipkart\.com/[a-z0-9\-]+(?:/[a-z0-9\-]+)*/p/([A-Za-z0-9]+)',
+                html
+            )
+            if matches:
+                item_id = matches[0]
+                # Reconstruct full URL from the match
+                full_matches = re.findall(
+                    r'(https?://(?:www\.)?flipkart\.com/[a-z0-9\-]+(?:/[a-z0-9\-]+)*/p/' + item_id + r'[^"\'>\s]*)',
+                    html
+                )
+                product_url = full_matches[0].split('"')[0] if full_matches else f"https://www.flipkart.com/search?q={urllib.parse.quote_plus(query)}"
+                title_match = re.search(r'<a[^>]+href="[^"]*flipkart\.com[^"]*"[^>]*>([^<]{10,80})</a>', html)
+                title = title_match.group(1).strip() if title_match else query
+                price_match = re.search(r'[₹\$]([0-9,]{3,8})', html)
+                price_str = f"₹{price_match.group(1)}" if price_match else ""
+                logger.info("Found Flipkart product: %s", product_url)
+                return {"url": product_url, "name": title, "price": price_str, "platform": "Flipkart"}
+    except Exception as e:
+        logger.warning("Bing→Flipkart scrape failed: %s", e)
+
+    # Fallback: specific Flipkart search
+    import urllib.parse as _up
+    q2 = _up.quote_plus(f'"{query}"')
     price_param = ""
     if price_min or price_max:
         price_param = f"&p[]=facets.price_range.from%3D{price_min}&p[]=facets.price_range.to%3D{price_max}"
-    url = f"https://www.flipkart.com/search?q={q}&sort=relevance{price_param}"
-    try:
-        async with httpx.AsyncClient(timeout=8, follow_redirects=True, headers=_HEADERS) as client:
-            r = await client.get(url)
-            if r.status_code != 200:
-                return None
-            html = r.text
-            # Extract product page link (pattern: /brand/product/p/itm...)
-            matches = re.findall(r'"(/[a-z0-9\-]+(?:/[a-z0-9\-]+)*/p/itm[a-z0-9]+)"', html)
-            if not matches:
-                # Alternative pattern
-                matches = re.findall(r'href="(/[^"]+/p/[A-Za-z0-9]+)"', html)
-            if matches:
-                product_url = "https://www.flipkart.com" + matches[0]
-                title_match = re.search(r'"name"\s*:\s*"([^"]{10,80})"', html)
-                title = title_match.group(1) if title_match else query
-                price_match = re.search(r'"₹([0-9,]+)"', html)
-                if not price_match:
-                    price_match = re.search(r'class="[^"]*_30jeq3[^"]*">₹([0-9,]+)', html)
-                price_str = f"₹{price_match.group(1)}" if price_match else ""
-                return {"url": product_url, "name": title, "price": price_str, "platform": "Flipkart"}
-    except Exception as e:
-        logger.warning("Flipkart scrape failed: %s", e)
-    return None
+    return {"url": f"https://www.flipkart.com/search?q={q2}&sort=relevance{price_param}", "name": query, "price": "", "platform": "Flipkart"}
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
