@@ -35,23 +35,21 @@ _HEADERS = {
 async def _find_product_url_via_gemini(query: str, platform: str, price_min: int = 0, price_max: int = 0) -> Optional[dict]:
     """
     Use Gemini with Google Search grounding to find an actual product page URL.
-    Gemini searches Google in real-time → extracts the exact Amazon/Flipkart product URL.
-    No bot detection issues — uses Gemini API, not direct scraping.
+    Falls back to a very specific price-filtered search URL that works reliably.
     """
     import json as _json
     from app.services.image_generator import get_client
     from google.genai import types as gtypes
 
-    price_constraint = f" Price must be between ₹{price_min} and ₹{price_max}." if (price_min or price_max) else ""
+    price_constraint = f" Price between ₹{price_min} and ₹{price_max}." if (price_min or price_max) else ""
     site = "amazon.in" if "amazon" in platform.lower() else "flipkart.com"
 
     search_prompt = (
-        f"Search for this exact product on {site} and return its direct product page URL.\n"
-        f"Product: {query}\n"
-        f"{price_constraint}\n"
-        f"Return ONLY a JSON object:\n"
-        f'{{"url": "https://www.{site}/...", "name": "product title", "price": "₹X,XXX"}}\n'
-        f"The URL must be a direct product page link (e.g., amazon.in/dp/ASIN or flipkart.com/product/p/itemid), NOT a search page."
+        f"Search for this product on {site} and return its direct product page URL.\n"
+        f"Product: {query}{price_constraint}\n\n"
+        f"Return ONLY this JSON (no markdown, no explanation):\n"
+        f'{{"url": "https://www.{site}/dp/ASIN_HERE_OR_product_path", "name": "exact product title", "price": "₹X,XXX"}}\n'
+        f"The url must contain /dp/ (Amazon) or /p/ (Flipkart). If not found, return null."
     )
 
     try:
@@ -61,18 +59,22 @@ async def _find_product_url_via_gemini(query: str, platform: str, price_min: int
             contents=search_prompt,
             config=gtypes.GenerateContentConfig(
                 tools=[gtypes.Tool(google_search=gtypes.GoogleSearch())],
-                temperature=0.1,
+                temperature=0.0,
             ),
         )
-        text = resp.text.strip()
-        # Extract JSON from response
-        json_match = re.search(r'\{[^}]+\}', text, re.DOTALL)
+        text = resp.text.strip() if resp.text else ""
+        # Remove markdown code blocks if present
+        text = re.sub(r"```(?:json)?", "", text).strip()
+        # Extract JSON
+        json_match = re.search(r'\{[^{}]+\}', text, re.DOTALL)
         if json_match:
             data = _json.loads(json_match.group())
-            url = data.get("url", "")
-            # Validate it's actually a product page, not search
-            if url and ("/dp/" in url or "/p/" in url or "/product/" in url):
-                logger.info("Gemini grounding found real product URL: %s", url)
+            url = (data.get("url") or "").strip()
+            # Strict validation: must be a real product page URL
+            is_amazon_product = "amazon.in" in url and ("/dp/" in url or "/gp/product/" in url)
+            is_flipkart_product = "flipkart.com" in url and "/p/" in url
+            if is_amazon_product or is_flipkart_product:
+                logger.info("Gemini grounding returned real product URL: %s", url)
                 return {
                     "url": url,
                     "name": data.get("name", query),
@@ -81,7 +83,19 @@ async def _find_product_url_via_gemini(query: str, platform: str, price_min: int
                 }
     except Exception as e:
         logger.warning("Gemini grounding search failed: %s", e)
-    return None
+
+    # Reliable fallback: very specific price-filtered search URL
+    import urllib.parse as _up
+    q_quoted = _up.quote_plus(f'"{query}"')
+    if "amazon" in platform.lower():
+        price_param = f"&rh=p_36%3A{price_min*100}-{price_max*100}" if (price_min or price_max) else ""
+        fallback = f"https://www.amazon.in/s?k={q_quoted}&i=apparel{price_param}"
+    else:
+        price_param = f"&p[]=facets.price_range.from%3D{price_min}&p[]=facets.price_range.to%3D{price_max}" if (price_min or price_max) else ""
+        fallback = f"https://www.flipkart.com/search?q={q_quoted}&sort=relevance{price_param}"
+
+    logger.info("Using specific search fallback: %s", fallback)
+    return {"url": fallback, "name": query, "price": "", "platform": "Amazon" if "amazon" in platform.lower() else "Flipkart"}
 
 settings = get_settings()
 logger = logging.getLogger(__name__)

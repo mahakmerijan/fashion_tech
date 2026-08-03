@@ -113,9 +113,12 @@ export default function RecommendationsPage() {
     setLoading(false);
   }, []);
 
-  // Auto-generate image once recommendation is loaded
+  // Auto-generate images when recommendation is loaded
   useEffect(() => {
-    if (result && !imageUrl && !generatingImage) {
+    if (!result || generatingImage) return;
+    // Trigger if Look 1 is missing, OR if Look 2 data exists but Look 2 image is missing
+    const hasLook2Data = result.recommendation_2 && Object.keys(result.recommendation_2).length > 0;
+    if (!imageUrl || (hasLook2Data && !imageUrl2)) {
       generateImage();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
