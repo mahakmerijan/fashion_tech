@@ -32,90 +32,56 @@ _HEADERS = {
 }
 
 
-async def _fetch_first_amazon_product(query: str, price_min: int = 0, price_max: int = 0) -> Optional[dict]:
-    """Search Bing Shopping and extract the first Amazon India product page URL."""
-    import urllib.parse
-    q = urllib.parse.quote_plus(f"{query} site:amazon.in")
-    # Bing price filter: &filters=price:"min_max"
-    price_filter = ""
-    if price_min or price_max:
-        lo = price_min or 0
-        hi = price_max or 99999
-        price_filter = f'&filters=price:"{lo}_{hi}"'
-    url = f"https://www.bing.com/shop?q={q}&mkt=en-IN{price_filter}"
+async def _find_product_url_via_gemini(query: str, platform: str, price_min: int = 0, price_max: int = 0) -> Optional[dict]:
+    """
+    Use Gemini with Google Search grounding to find an actual product page URL.
+    Gemini searches Google in real-time → extracts the exact Amazon/Flipkart product URL.
+    No bot detection issues — uses Gemini API, not direct scraping.
+    """
+    import json as _json
+    from app.services.image_generator import get_client
+    from google.genai import types as gtypes
+
+    price_constraint = f" Price must be between ₹{price_min} and ₹{price_max}." if (price_min or price_max) else ""
+    site = "amazon.in" if "amazon" in platform.lower() else "flipkart.com"
+
+    search_prompt = (
+        f"Search for this exact product on {site} and return its direct product page URL.\n"
+        f"Product: {query}\n"
+        f"{price_constraint}\n"
+        f"Return ONLY a JSON object:\n"
+        f'{{"url": "https://www.{site}/...", "name": "product title", "price": "₹X,XXX"}}\n'
+        f"The URL must be a direct product page link (e.g., amazon.in/dp/ASIN or flipkart.com/product/p/itemid), NOT a search page."
+    )
+
     try:
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True, headers=_HEADERS) as client:
-            r = await client.get(url)
-            html = r.text
-            # Bing Shopping embeds actual Amazon product URLs directly in the HTML
-            matches = re.findall(
-                r'https?://(?:www\.)?amazon\.in(?:/[^"\'>\s]+)?/dp/([A-Z0-9]{10})(?:[^"\'>\s]*)?',
-                html
-            )
-            if matches:
-                asin = matches[0]
-                product_url = f"https://www.amazon.in/dp/{asin}"
-                # Try to get title
-                title_match = re.search(r'<a[^>]+href="[^"]*amazon\.in[^"]*"[^>]*>([^<]{10,80})</a>', html)
-                title = title_match.group(1).strip() if title_match else query
-                # Try to get price
-                price_match = re.search(r'[₹\$]([0-9,]{3,8})', html)
-                price_str = f"₹{price_match.group(1)}" if price_match else ""
-                logger.info("Found Amazon product: %s", product_url)
-                return {"url": product_url, "name": title, "price": price_str, "platform": "Amazon"}
+        client = get_client()
+        resp = client.models.generate_content(
+            model=settings.GEMINI_MODEL_RECOMMEND,
+            contents=search_prompt,
+            config=gtypes.GenerateContentConfig(
+                tools=[gtypes.Tool(google_search=gtypes.GoogleSearch())],
+                temperature=0.1,
+            ),
+        )
+        text = resp.text.strip()
+        # Extract JSON from response
+        json_match = re.search(r'\{[^}]+\}', text, re.DOTALL)
+        if json_match:
+            data = _json.loads(json_match.group())
+            url = data.get("url", "")
+            # Validate it's actually a product page, not search
+            if url and ("/dp/" in url or "/p/" in url or "/product/" in url):
+                logger.info("Gemini grounding found real product URL: %s", url)
+                return {
+                    "url": url,
+                    "name": data.get("name", query),
+                    "price": data.get("price", ""),
+                    "platform": "Amazon" if "amazon" in url else "Flipkart",
+                }
     except Exception as e:
-        logger.warning("Bing→Amazon scrape failed: %s", e)
-
-    # Fallback: direct Amazon search with price filter
-    import urllib.parse as _up
-    q2 = _up.quote_plus(f'"{query}"')
-    price_param = f"&rh=p_36%3A{price_min*100}-{price_max*100}" if (price_min or price_max) else ""
-    return {"url": f"https://www.amazon.in/s?k={q2}&i=apparel{price_param}", "name": query, "price": "", "platform": "Amazon"}
-
-
-async def _fetch_first_flipkart_product(query: str, price_min: int = 0, price_max: int = 0) -> Optional[dict]:
-    """Search Bing Shopping and extract the first Flipkart product page URL."""
-    import urllib.parse
-    q = urllib.parse.quote_plus(f"{query} site:flipkart.com")
-    price_filter = ""
-    if price_min or price_max:
-        lo = price_min or 0
-        hi = price_max or 99999
-        price_filter = f'&filters=price:"{lo}_{hi}"'
-    url = f"https://www.bing.com/shop?q={q}&mkt=en-IN{price_filter}"
-    try:
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True, headers=_HEADERS) as client:
-            r = await client.get(url)
-            html = r.text
-            # Extract Flipkart product page links (pattern: /brand/product/p/itm...)
-            matches = re.findall(
-                r'https?://(?:www\.)?flipkart\.com/[a-z0-9\-]+(?:/[a-z0-9\-]+)*/p/([A-Za-z0-9]+)',
-                html
-            )
-            if matches:
-                item_id = matches[0]
-                # Reconstruct full URL from the match
-                full_matches = re.findall(
-                    r'(https?://(?:www\.)?flipkart\.com/[a-z0-9\-]+(?:/[a-z0-9\-]+)*/p/' + item_id + r'[^"\'>\s]*)',
-                    html
-                )
-                product_url = full_matches[0].split('"')[0] if full_matches else f"https://www.flipkart.com/search?q={urllib.parse.quote_plus(query)}"
-                title_match = re.search(r'<a[^>]+href="[^"]*flipkart\.com[^"]*"[^>]*>([^<]{10,80})</a>', html)
-                title = title_match.group(1).strip() if title_match else query
-                price_match = re.search(r'[₹\$]([0-9,]{3,8})', html)
-                price_str = f"₹{price_match.group(1)}" if price_match else ""
-                logger.info("Found Flipkart product: %s", product_url)
-                return {"url": product_url, "name": title, "price": price_str, "platform": "Flipkart"}
-    except Exception as e:
-        logger.warning("Bing→Flipkart scrape failed: %s", e)
-
-    # Fallback: specific Flipkart search
-    import urllib.parse as _up
-    q2 = _up.quote_plus(f'"{query}"')
-    price_param = ""
-    if price_min or price_max:
-        price_param = f"&p[]=facets.price_range.from%3D{price_min}&p[]=facets.price_range.to%3D{price_max}"
-    return {"url": f"https://www.flipkart.com/search?q={q2}&sort=relevance{price_param}", "name": query, "price": "", "platform": "Flipkart"}
+        logger.warning("Gemini grounding search failed: %s", e)
+    return None
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -384,13 +350,10 @@ Return ONLY the JSON array."""
             price_str = p.get("estimated_price", "")
             for_item = p.get("for_item", "")
 
-            # Try to scrape the actual product page URL
+            # Use Gemini with Google Search grounding to find real product page URL
             scraped = None
             try:
-                if "amazon" in platform.lower():
-                    scraped = await _fetch_first_amazon_product(search_q, price_min, price_max)
-                elif "flipkart" in platform.lower():
-                    scraped = await _fetch_first_flipkart_product(search_q, price_min, price_max)
+                scraped = await _find_product_url_via_gemini(search_q, platform, price_min, price_max)
             except Exception:
                 pass
 
