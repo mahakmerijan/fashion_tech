@@ -273,10 +273,10 @@ export default function QuestionnairePage() {
   // ── Price Range Picker UI (Step 1) ────────────────────────────────────────
   if (step === 1) {
     return (
-      <div className="min-h-screen flex flex-col bg-[#0d0d1a]">
+      <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", backgroundColor: "#0d0d1a" }}>
         {/* Progress */}
         <div className="px-6 pt-8 pb-4">
-          <div className="flex justify-between text-xs text-slate-400 mb-2">
+          <div className="flex justify-between text-xs mb-2" style={{ color: "#94a3b8" }}>
             <span>Step 3 of 5 · Price Range</span>
             <span>42% complete</span>
           </div>
@@ -285,10 +285,10 @@ export default function QuestionnairePage() {
 
         {/* Header */}
         <div className="px-6 pb-6 text-center">
-          <h1 className="text-2xl font-bold text-white leading-tight">
+          <h1 className="text-2xl font-bold leading-tight" style={{ color: "#ffffff" }}>
             What&apos;s your shopping budget<br />per item?
           </h1>
-          <p className="text-slate-400 text-sm mt-2">
+          <p className="text-sm mt-2" style={{ color: "#94a3b8" }}>
             We&apos;ll only recommend products within this price range
           </p>
         </div>
@@ -301,19 +301,27 @@ export default function QuestionnairePage() {
               <button
                 key={range.value}
                 onClick={() => setSelectedBudget(range.value)}
-                className={`relative rounded-2xl px-4 py-6 flex flex-col items-center justify-center text-center transition-all border-2 ${
-                  selected
-                    ? "border-violet-500 bg-violet-900/40 scale-[0.97]"
-                    : "border-white/10 bg-white/5 hover:border-violet-400/50"
-                }`}
+                style={{
+                  position: "relative",
+                  borderRadius: "1rem",
+                  padding: "1.5rem 1rem",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  textAlign: "center",
+                  border: selected ? "2px solid #7c3aed" : "2px solid rgba(255,255,255,0.12)",
+                  backgroundColor: selected ? "rgba(124,58,237,0.3)" : "rgba(255,255,255,0.05)",
+                  cursor: "pointer",
+                }}
               >
                 {selected && (
-                  <div className="absolute top-3 right-3 w-5 h-5 bg-violet-500 rounded-full flex items-center justify-center">
-                    <span className="text-white text-xs font-bold">✓</span>
+                  <div style={{ position: "absolute", top: "0.6rem", right: "0.6rem", width: "1.2rem", height: "1.2rem", backgroundColor: "#7c3aed", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <span style={{ color: "white", fontSize: "0.65rem", fontWeight: "bold" }}>✓</span>
                   </div>
                 )}
-                <p className="text-white font-bold text-lg leading-tight">{range.label}</p>
-                <p className="text-slate-400 text-xs mt-1">{range.sub}</p>
+                <p style={{ color: "#ffffff", fontWeight: 700, fontSize: "1.1rem", lineHeight: 1.3, margin: 0 }}>{range.label}</p>
+                <p style={{ color: "#94a3b8", fontSize: "0.72rem", marginTop: "0.3rem" }}>{range.sub}</p>
               </button>
             );
           })}
@@ -324,7 +332,8 @@ export default function QuestionnairePage() {
           <Button
             onClick={handleNext}
             disabled={!selectedBudget}
-            className="w-full h-14 text-base font-semibold tracking-widest uppercase rounded-2xl bg-violet-600 hover:bg-violet-700 disabled:bg-slate-700 disabled:text-slate-500"
+            style={{ width: "100%", height: "3.5rem", fontSize: "1rem", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", borderRadius: "1rem" }}
+            className={selectedBudget ? "bg-violet-600 hover:bg-violet-700 text-white" : "bg-slate-700 text-slate-500"}
           >
             CONTINUE
           </Button>

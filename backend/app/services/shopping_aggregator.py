@@ -160,13 +160,9 @@ def _parse_budget_range(budget: str) -> tuple[int, int]:
 
 
 def _google_shopping_url(query: str, price_min: int = 0, price_max: int = 0, country: str = "in") -> str:
-    """
-    Build a Google Shopping URL for India.
-    Price filters use the tbs parameter: ppr_min / ppr_max (prices in INR).
-    These are 100% real, always-working search links.
-    """
+    """Google Shopping with price filter — always real, always shows actual products."""
     import urllib.parse
-    q = urllib.parse.quote_plus(query + " India buy online")
+    q = urllib.parse.quote_plus(query)
     tbs_parts = ["mr:1"]
     if price_min > 0 or price_max > 0:
         tbs_parts.append("price:1")
@@ -175,22 +171,32 @@ def _google_shopping_url(query: str, price_min: int = 0, price_max: int = 0, cou
         if price_max > 0:
             tbs_parts.append(f"ppr_max:{price_max}")
     tbs = ",".join(tbs_parts)
-    return f"https://www.google.com/search?q={q}&tbm=shop&tbs={tbs}&hl=en&gl={country}"
+    return f"https://www.google.com/search?q={q}+site%3Amyntra.com+OR+site%3Aflipkart.com+OR+site%3Aamazon.in&tbm=shop&tbs={tbs}&hl=en&gl={country}"
 
 
-def _platform_shopping_url(query: str, platform: str, gender: str = "men") -> str:
-    """Build platform-specific search URL using the specific product query."""
+def _platform_shopping_url(query: str, platform: str, gender: str = "men", price_min: int = 0, price_max: int = 0) -> str:
+    """Platform-specific search URL with price range filter — direct to filtered results."""
     import urllib.parse
     q_plus = urllib.parse.quote_plus(query)
-    q_dash = query.replace(" ", "-").lower()
+
     if platform == "Myntra":
-        return f"https://www.myntra.com/{gender}/{q_dash}?rawQuery={q_plus}&sort=popularity"
+        price_filter = f"&f=Price%3A{price_min}+TO+{price_max}" if price_min or price_max else ""
+        return f"https://www.myntra.com/{gender}?rawQuery={q_plus}&sort=popularity{price_filter}"
     if platform == "Flipkart":
-        return f"https://www.flipkart.com/search?q={q_plus}&sort=relevance"
+        price_filter = ""
+        if price_min or price_max:
+            price_filter = f"&p[]=facets.price_range.from%3D{price_min}&p[]=facets.price_range.to%3D{price_max}"
+        return f"https://www.flipkart.com/search?q={q_plus}&sort=relevance{price_filter}"
     if platform == "AJIO":
-        return f"https://www.ajio.com/search/?text={q_plus}&gender={gender}"
-    # Amazon
-    return f"https://www.amazon.in/s?k={q_plus}&i=apparel&rh=n:1968024031"
+        price_filter = f"&ft=price[{price_min}]+to+[{price_max}]" if price_min or price_max else ""
+        return f"https://www.ajio.com/search/?text={q_plus}&gender={gender}{price_filter}"
+    # Amazon with price range in paise (₹1 = 100 paise)
+    price_filter = ""
+    if price_min or price_max:
+        lo = price_min * 100 if price_min else 1
+        hi = price_max * 100 if price_max else 9999999
+        price_filter = f"&rh=p_36%3A{lo}-{hi}"
+    return f"https://www.amazon.in/s?k={q_plus}&i=apparel{price_filter}"
 
 
 async def get_specific_product_links(
@@ -272,38 +278,36 @@ Return ONLY the JSON array."""
 
         for p in products:
             search_q = p.get("search_query") or f"{p.get('brand','')} {p.get('product_name','')}".strip()
-            platform = p.get("platform", "Google Shopping")
+            platform = p.get("platform", "Myntra")
+            name = f"{p.get('brand','')} — {p.get('product_name','')}".strip(" —")
+            price_str = p.get("estimated_price", "")
 
-            # Primary: Google Shopping with price filter (100% real link)
-            google_url = _google_shopping_url(search_q, price_min, price_max)
+            # Primary: platform-specific price-filtered search
+            platform_url = _platform_shopping_url(search_q, platform, gender_word, price_min, price_max)
 
-            # Secondary: platform-specific filtered search
-            platform_url = _platform_shopping_url(search_q, platform, gender_word)
-
-            # Return Google Shopping as primary (guaranteed) + platform as secondary
-            for url, plat in [(google_url, "Google Shopping"), (platform_url, platform)]:
-                results.append({
-                    "name": f"{p.get('brand','')} — {p.get('product_name','')}".strip(" —"),
-                    "price": p.get("estimated_price", ""),
-                    "url": url,
-                    "image_url": "",
-                    "platform": plat,
-                    "for_item": p.get("for_item", ""),
-                    "from_image": True,
-                })
+            results.append({
+                "name": name,
+                "price": price_str,
+                "url": platform_url,
+                "image_url": "",
+                "platform": platform,
+                "for_item": p.get("for_item", ""),
+                "from_image": True,
+            })
 
     except Exception as e:
         logger.error("get_specific_product_links failed: %s", e)
-        # Fallback: build Google Shopping URLs directly from item descriptions
-        for item in missing_items:
-            query = f"{item.get('color','')} {item.get('description', item.get('category',''))} {gender_word} India"
-            google_url = _google_shopping_url(query.strip(), price_min, price_max)
+        # Fallback: build price-filtered platform URLs from item descriptions
+        for i, item in enumerate(missing_items):
+            query = f"{item.get('color','')} {item.get('description', item.get('category',''))} {gender_word}".strip()
+            platform = ["Myntra", "Flipkart", "AJIO", "Amazon"][i % 4]
+            url = _platform_shopping_url(query, platform, gender_word, price_min, price_max)
             results.append({
                 "name": item.get("description", item.get("category", "Product")),
                 "price": budget or "",
-                "url": google_url,
+                "url": url,
                 "image_url": "",
-                "platform": "Google Shopping",
+                "platform": platform,
                 "for_item": item.get("description", ""),
                 "from_image": True,
             })
