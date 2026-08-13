@@ -1,0 +1,61 @@
+databases:
+  - name: styleai-postgres
+    databaseName: styleai
+    user: styleai
+    plan: free
+
+  - name: styleai-redis
+    plan: free
+
+services:
+  # ─── Backend (FastAPI) ───────────────────────────────────────────────────────
+  - type: web
+    name: styleai-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: styleai-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: styleai-redis
+          type: redis
+          property: connectionString
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_REGION
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: CDN_BASE_URL
+        sync: false
+    healthCheckPath: /health
+
+  # ─── Frontend (Next.js) ──────────────────────────────────────────────────────
+  - type: web
+    name: styleai-frontend
+    runtime: docker
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
+    plan: free
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          name: styleai-backend
+          type: web
+          property: host
+          transform: "https://{value}"
