@@ -1,4 +1,6 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// Render passes just the hostname via fromService.host; ensure we have a full URL
+const _rawApiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = _rawApiUrl.startsWith("http") ? _rawApiUrl : `https://${_rawApiUrl}`;
 
 // ── Auth ───────────────────────────────────────────────────────────────────
 
