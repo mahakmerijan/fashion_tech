@@ -54,7 +54,7 @@ services:
     runtime: node
     rootDir: frontend
     buildCommand: npm ci && npm run build
-    startCommand: node_modules/.bin/next start -p 3000 -H 0.0.0.0
+    startCommand: PORT=3000 node_modules/.bin/next start -H 0.0.0.0
     plan: free
     envVars:
       - key: NEXT_PUBLIC_API_URL
