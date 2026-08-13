@@ -60,5 +60,4 @@ services:
         fromService:
           name: styleai-backend
           type: web
-          property: host
-          transform: "https://{value}"
+          property: hostWithScheme
