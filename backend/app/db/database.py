@@ -4,7 +4,14 @@ from app.core.config import get_settings
 
 settings = get_settings()
 
-_is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+# Render provides postgresql:// but asyncpg needs postgresql+asyncpg://
+_db_url = settings.DATABASE_URL
+if _db_url.startswith("postgres://"):
+    _db_url = _db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+elif _db_url.startswith("postgresql://"):
+    _db_url = _db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+_is_sqlite = _db_url.startswith("sqlite")
 _engine_kwargs: dict = {"pool_pre_ping": True}
 if not _is_sqlite:
     _engine_kwargs["pool_size"] = 10
@@ -12,7 +19,7 @@ if not _is_sqlite:
 else:
     _engine_kwargs["connect_args"] = {"check_same_thread": False}
 
-engine = create_async_engine(settings.DATABASE_URL, **_engine_kwargs)
+engine = create_async_engine(_db_url, **_engine_kwargs)
 
 AsyncSessionLocal = async_sessionmaker(
     engine,
