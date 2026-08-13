@@ -53,8 +53,8 @@ services:
     name: styleai-frontend
     runtime: node
     rootDir: frontend
-    buildCommand: npm ci && npm run build && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public
-    startCommand: node .next/standalone/server.js
+    buildCommand: npm ci && npm run build
+    startCommand: node_modules/.bin/next start
     plan: free
     envVars:
       - key: NEXT_PUBLIC_API_URL
