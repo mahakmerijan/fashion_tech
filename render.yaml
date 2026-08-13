@@ -4,10 +4,12 @@ databases:
     user: styleai
     plan: free
 
-  - name: styleai-redis
-    plan: free
-
 services:
+  - type: redis
+    name: styleai-redis
+    plan: free
+    maxmemoryPolicy: allkeys-lru
+
   # ─── Backend (FastAPI) ───────────────────────────────────────────────────────
   - type: web
     name: styleai-backend
