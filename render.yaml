@@ -51,11 +51,14 @@ services:
   # ─── Frontend (Next.js) ──────────────────────────────────────────────────────
   - type: web
     name: styleai-frontend
-    runtime: docker
-    dockerfilePath: ./frontend/Dockerfile
-    dockerContext: ./frontend
+    runtime: node
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    startCommand: node .next/standalone/server.js
     plan: free
     envVars:
+      - key: NODE_ENV
+        value: production
       - key: NEXT_PUBLIC_API_URL
         fromService:
           name: styleai-backend
