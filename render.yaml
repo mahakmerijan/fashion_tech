@@ -9,6 +9,7 @@ services:
     name: styleai-redis
     plan: free
     maxmemoryPolicy: allkeys-lru
+    ipAllowList: []
 
   # ─── Backend (FastAPI) ───────────────────────────────────────────────────────
   - type: web
