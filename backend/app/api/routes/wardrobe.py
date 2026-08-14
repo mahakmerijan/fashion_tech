@@ -1,4 +1,6 @@
 import uuid
+import asyncio
+import logging
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -11,49 +13,35 @@ from app.services.cache_service import cache_delete, profile_context_key
 from app.schemas.wardrobe import WardrobeUploadResponse, WardrobeListResponse, WardrobeItemOut
 
 router = APIRouter(prefix="/api/wardrobe", tags=["wardrobe"])
+logger = logging.getLogger(__name__)
 
 MAX_IMAGES_PER_UPLOAD = 20
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
 
+# Limit concurrent Gemini Vision calls to avoid rate limits (free tier = 15 RPM)
+_GEMINI_SEMAPHORE = asyncio.Semaphore(3)
 
-@router.post("/{user_id}/upload", response_model=WardrobeUploadResponse)
-async def upload_wardrobe(
-    user_id: str,
-    images: List[UploadFile] = File(...),
-    db: AsyncSession = Depends(get_db),
-):
-    """Upload one or more wardrobe images. AI analyses each one."""
-    if len(images) > MAX_IMAGES_PER_UPLOAD:
-        raise HTTPException(status_code=400, detail=f"Max {MAX_IMAGES_PER_UPLOAD} images per upload")
 
+async def _process_single_image(image: UploadFile, user_id: str) -> WardrobeItem | None:
+    """Analyse one image and build a WardrobeItem — rate-limited by semaphore."""
+    if not image.content_type or not image.content_type.startswith("image/"):
+        logger.warning("Skipping non-image file: %s (%s)", image.filename, image.content_type)
+        return None
+    data = await image.read()
+    if len(data) > MAX_IMAGE_SIZE:
+        logger.warning("Skipping oversized image: %s (%d bytes)", image.filename, len(data))
+        return None
     try:
-        uuid.UUID(user_id)  # validate format
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid user_id")
+        # Semaphore limits concurrent Gemini calls to 3 — prevents 429 rate limit errors
+        async with _GEMINI_SEMAPHORE:
+            metadata = await analyze_wardrobe_item(data)
 
-    items_created = []
-
-    for image in images:
-        if not image.content_type or not image.content_type.startswith("image/"):
-            continue
-        data = await image.read()
-        if len(data) > MAX_IMAGE_SIZE:
-            continue
-
-        # AI analysis (cached by image hash)
-        metadata = await analyze_wardrobe_item(data)
-
-        # CLIP embedding for semantic search
         text_desc = build_clip_text_description(metadata)
         embedding = await generate_clip_embedding(text_desc)
-
-        # Build S3-like URL (local path in dev)
         item_id = str(uuid.uuid4())
         image_key = f"wardrobe/{user_id}/{item_id}.jpg"
-        # In production: upload to S3 and get CDN URL
         image_url = await _store_image(data, image_key)
-
-        item = WardrobeItem(
+        return WardrobeItem(
             item_id=item_id,
             user_id=user_id,
             image_url=image_url,
@@ -69,8 +57,36 @@ async def upload_wardrobe(
             ai_metadata=metadata,
             embedding=embedding,
         )
+    except Exception as e:
+        logger.error("Failed to process image %s: %s", image.filename, e)
+        return None
+
+
+@router.post("/{user_id}/upload", response_model=WardrobeUploadResponse)
+async def upload_wardrobe(
+    user_id: str,
+    images: List[UploadFile] = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload one or more wardrobe images. AI analyses all concurrently."""
+    if len(images) > MAX_IMAGES_PER_UPLOAD:
+        raise HTTPException(status_code=400, detail=f"Max {MAX_IMAGES_PER_UPLOAD} images per upload")
+
+    try:
+        uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user_id")
+
+    # Analyse ALL images concurrently instead of sequentially
+    results = await asyncio.gather(
+        *[_process_single_image(img, user_id) for img in images],
+        return_exceptions=True,
+    )
+
+    items_created = [r for r in results if isinstance(r, WardrobeItem)]
+
+    for item in items_created:
         db.add(item)
-        items_created.append(item)
 
     await db.commit()
     for item in items_created:

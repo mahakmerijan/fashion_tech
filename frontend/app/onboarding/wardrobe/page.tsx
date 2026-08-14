@@ -47,24 +47,47 @@ export default function WardrobePage() {
     const pending = localItems.filter(i => i.status === "pending");
     if (!pending.length) return;
 
-    for (const item of pending) {
-      setLocalItems(prev => prev.map(i => i.localId === item.localId ? { ...i, status: "uploading" } : i));
-      try {
-        const fd = new FormData();
-        fd.append("images", item.file);
-        const result = await uploadWardrobeItems(userId || "temp", fd) as { items: Record<string, unknown>[] };
-        const serverItems = result.items || [];
-        addWardrobeItems(serverItems as unknown as Parameters<typeof addWardrobeItems>[0]);
-        setLocalItems(prev =>
-          prev.map(i =>
-            i.localId === item.localId
-              ? { ...i, status: "done", serverItem: serverItems[0] }
-              : i
-          )
-        );
-      } catch {
-        setLocalItems(prev => prev.map(i => i.localId === item.localId ? { ...i, status: "error" } : i));
-      }
+    // Mark all as uploading at once
+    setLocalItems(prev =>
+      prev.map(i => pending.some(p => p.localId === i.localId) ? { ...i, status: "uploading" } : i)
+    );
+
+    try {
+      // ONE batch request with all images — backend processes with semaphore (max 3 concurrent Gemini calls)
+      const fd = new FormData();
+      pending.forEach(item => fd.append("images", item.file));
+
+      const result = await uploadWardrobeItems(userId || "temp", fd) as { items: Record<string, unknown>[] };
+      const serverItems = result.items || [];
+      addWardrobeItems(serverItems as unknown as Parameters<typeof addWardrobeItems>[0]);
+
+      // Mark each local item as done, matched by index to server items
+      setLocalItems(prev =>
+        prev.map(i => {
+          const idx = pending.findIndex(p => p.localId === i.localId);
+          if (idx === -1) return i;
+          return { ...i, status: "done", serverItem: serverItems[idx] };
+        })
+      );
+    } catch (err) {
+      console.error("Batch upload failed:", err);
+      // On failure, retry individually so partial success is captured
+      await Promise.allSettled(
+        pending.map(async (item) => {
+          try {
+            const fd = new FormData();
+            fd.append("images", item.file);
+            const result = await uploadWardrobeItems(userId || "temp", fd) as { items: Record<string, unknown>[] };
+            const serverItems = result.items || [];
+            addWardrobeItems(serverItems as unknown as Parameters<typeof addWardrobeItems>[0]);
+            setLocalItems(prev =>
+              prev.map(i => i.localId === item.localId ? { ...i, status: "done", serverItem: serverItems[0] } : i)
+            );
+          } catch {
+            setLocalItems(prev => prev.map(i => i.localId === item.localId ? { ...i, status: "error" } : i));
+          }
+        })
+      );
     }
   }, [localItems, userId, addWardrobeItems]);
 
