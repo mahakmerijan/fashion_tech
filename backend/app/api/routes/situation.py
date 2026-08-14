@@ -109,8 +109,13 @@ async def situation_recommend(
         if len(place_bytes) > 15 * 1024 * 1024:
             place_bytes = None  # too large, skip
 
-    # ── Run LangGraph pipeline ─────────────────────────────────────────────────
-    result = await run_situation_pipeline(
+    # ── Run pipeline + shopping concurrently ──────────────────────────────────
+    # Pipeline: place analysis → wardrobe match → Gemini outfit reasoning (~7-12s)
+    # Shopping: runs in parallel with the pipeline (~3-5s)
+    # Images: NOT generated here — frontend triggers them after seeing recommendations
+    import asyncio as _asyncio
+
+    pipeline_task = _asyncio.create_task(run_situation_pipeline(
         user_id=user_id or "anonymous",
         situation_text=situation_text,
         person_description=person_description,
@@ -119,12 +124,15 @@ async def situation_recommend(
         wardrobe=wardrobe_list,
         place_image_bytes=place_bytes,
         selfie_b64=selfie_b64 or None,
-    )
+    ))
+
+    # Wait for pipeline first (shopping needs missing_items from it)
+    result = await pipeline_task
 
     recommendation = result.get("recommendation", {})
     recommendation_2 = result.get("recommendation_2", {})
-    composite_image_url = result.get("composite_image_url", "")
-    composite_image_url_2 = result.get("composite_image_url_2", "")
+    composite_image_url = ""   # images generated client-side via /api/images/generate
+    composite_image_url_2 = ""
     place_analysis = result.get("place_analysis", "")
     budget = prefs.get("budget", "")
     gender = prefs.get("gender", "men").lower().replace("male", "men").replace("female", "women")

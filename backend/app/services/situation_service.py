@@ -588,8 +588,7 @@ def build_situation_graph():
     graph.set_entry_point("analyze_place")
     graph.add_edge("analyze_place", "match_wardrobe")
     graph.add_edge("match_wardrobe", "gemini_reason")
-    graph.add_edge("gemini_reason", "generate_composite_image")
-    graph.add_edge("generate_composite_image", END)
+    graph.add_edge("gemini_reason", END)   # image generation moved to frontend trigger
 
     return graph.compile()
 

@@ -148,39 +148,95 @@ async def generate_outfit_image(
         f"{i.get('color', '')} {i.get('description', i.get('category', 'item'))}"
         for i in outfit_items
     ]
-    outfit_desc = ", ".join(outfit_parts)
+    outfit_desc = ", ".join(p for p in outfit_parts if p)
     style_hint = face_profile.get("style_personality", "")
-    style_phrase = f" The overall aesthetic is {style_hint}." if style_hint else ""
+    color_season = face_profile.get("color_season", "")
+    style_ctx = " | ".join(filter(None, [
+        f"Style: {style_hint}" if style_hint else "",
+        f"Colour season: {color_season}" if color_season else "",
+    ]))
+    feedback_phrase = f"\nUser feedback: {user_feedback.strip()}." if user_feedback and user_feedback.strip() else ""
 
-    feedback_phrase = f" Additional instruction from the user: {user_feedback.strip()}." if user_feedback and user_feedback.strip() else ""
+    # Fetch actual dress images from wardrobe item URLs (concurrent)
+    import asyncio as _asyncio
+    import httpx as _httpx
 
-    if selfie_bytes and place_bytes:
-        prompt = (
-            f"Professional fashion editorial photo of a {subject}. "
-            f"Match the face, skin tone, and hair from the FIRST reference photo (the selfie). "
-            f"CRITICAL PROPORTIONS: Natural human anatomy — face size proportional to the body, "
-            f"correct head-to-body ratio (~1:7). Single seamless photograph, not a composite. "
-            f"This is a {subject} — do NOT change the gender or skin tone. "
-            f"Outfit: {outfit_desc}.{style_phrase}{feedback_phrase} "
-            f"Place the person naturally inside the venue shown in the SECOND photo. "
-            f"Full body shot, realistic lighting matching the venue, high quality fashion photography."
+    async def _fetch_dress(url: str) -> Optional[bytes]:
+        if not url or not url.startswith("http") or "localhost" in url:
+            return None
+        try:
+            async with _httpx.AsyncClient(timeout=8) as c:
+                r = await c.get(url, headers={"User-Agent": "StyleAI/1.0"})
+                if r.status_code == 200 and r.headers.get("content-type", "").startswith("image"):
+                    return r.content
+        except Exception:
+            pass
+        return None
+
+    dress_urls = [i.get("image_url", "") for i in outfit_items if i.get("image_url")]
+    if dress_urls:
+        fetched_raw = await _asyncio.gather(*[_fetch_dress(u) for u in dress_urls], return_exceptions=True)
+        from PIL import Image as _PILImage
+        import io as _io
+        dress_images: list[bytes] = []
+        for f in fetched_raw:
+            if isinstance(f, bytes) and len(f) > 1000:
+                try:
+                    pil = _PILImage.open(_io.BytesIO(f)).convert("RGB")
+                    w, h = pil.size
+                    scale = min(1.0, 512 / max(w, h))
+                    if scale < 1.0:
+                        pil = pil.resize((int(w * scale), int(h * scale)), _PILImage.LANCZOS)
+                    buf = _io.BytesIO()
+                    pil.save(buf, format="JPEG", quality=85)
+                    dress_images.append(buf.getvalue())
+                except Exception:
+                    pass
+    else:
+        dress_images = []
+
+    # Anti-hallucination: detect outfit type and build structured prompt
+    outfit_lower = outfit_desc.lower()
+    is_traditional = any(w in outfit_lower for w in ["kurta", "churidar", "dhoti", "sherwani", "ethnic", "traditional", "bandhgala"])
+    if is_traditional:
+        clothing_note = "OUTFIT TYPE: Traditional/ethnic Indian wear as listed. Render exactly these garments."
+    else:
+        clothing_note = (
+            "OUTFIT TYPE: Modern western fashion. "
+            "CRITICAL: Show ONLY the exact clothing listed. "
+            "DO NOT substitute based on occasion/location/culture. "
+            "DO NOT generate kurta/churidar/ethnic wear."
         )
-    elif selfie_bytes:
+
+    # Build reference image instruction list
+    ref_lines = []
+    img_idx = 1
+    if selfie_bytes:
+        ref_lines.append(f"IMAGE {img_idx} (selfie): match this exact person's face, skin tone, hair — do NOT alter")
+        img_idx += 1
+    for n in range(len(dress_images)):
+        ref_lines.append(f"IMAGE {img_idx + n}: actual garment {n+1} — render this EXACT clothing on the person")
+    img_idx += len(dress_images)
+    if place_bytes:
+        ref_lines.append(f"IMAGE {img_idx} (venue): place person naturally in this setting with matching lighting")
+    ref_block = "\n".join(f"  - {r}" for r in ref_lines) if ref_lines else ""
+
+    if selfie_bytes or dress_images or place_bytes:
         prompt = (
-            f"Professional fashion editorial photo of a {subject}. "
-            f"Match the face, skin tone, and hair from the reference photo. "
-            f"CRITICAL PROPORTIONS: Natural human anatomy — face size proportional to the body, "
-            f"correct head-to-body ratio (~1:7). Single seamless photograph, not a composite. "
-            f"This is a {subject} — do NOT change the gender or skin tone. "
-            f"Outfit: {outfit_desc}.{style_phrase}{feedback_phrase} "
-            f"Occasion: {occasion}. "
-            f"Full body shot, neutral studio background, professional fashion photography, "
-            f"well-lit, high quality, natural proportions."
+            f"Fashion editorial photograph of a {subject}.\n\n"
+            f"EXACT CLOTHING TO RENDER:\n  {outfit_desc}\n{feedback_phrase}\n"
+            f"{clothing_note}\n\n"
+            + (f"Reference images:\n{ref_block}\n\n" if ref_block else "")
+            + f"RULES: preserve selfie face/skin/hair, show exact listed garments, "
+            f"natural anatomy head-to-body ~1:7, single seamless photo.\n"
+            f"Style: {style_ctx}\nOccasion: {occasion}\n"
+            f"Full body, professional fashion photography."
         )
     else:
         prompt = build_image_prompt(face_profile, outfit_items, occasion)
 
-    logger.info("Generating image for hash %s — selfie=%s prompt: %s...", prompt_hash[:8], bool(selfie_bytes), prompt[:80])
+    logger.info("Generating image hash=%s selfie=%s dresses=%d place=%s",
+                prompt_hash[:8], bool(selfie_bytes), len(dress_images), bool(place_bytes))
 
     # 5. Call Gemini Image Generation
     models_to_try = [settings.GEMINI_MODEL_IMAGE] + [
@@ -192,15 +248,15 @@ async def generate_outfit_image(
     client = get_client()
     for model in models_to_try:
         try:
-            if selfie_bytes or place_bytes:
-                # Multimodal: pass selfie and/or place as reference images
+            if selfie_bytes or dress_images or place_bytes:
                 contents = [prompt]
                 if selfie_bytes:
                     contents.append(gtypes.Part.from_bytes(data=selfie_bytes, mime_type="image/jpeg"))
+                for d in dress_images:
+                    contents.append(gtypes.Part.from_bytes(data=d, mime_type="image/jpeg"))
                 if place_bytes:
                     from PIL import Image as PILImage
                     import io as _io
-                    # Compress place image before sending
                     pil = PILImage.open(_io.BytesIO(place_bytes)).convert("RGB")
                     w, h = pil.size
                     scale = min(1.0, 1024 / max(w, h))

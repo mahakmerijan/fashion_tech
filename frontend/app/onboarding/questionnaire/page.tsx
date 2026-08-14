@@ -177,6 +177,11 @@ export default function QuestionnairePage() {
       return;
     }
     if (step < QUESTIONS.length + 1) {
+      // If no answer selected, apply a sensible default so the question isn't a blocker
+      if (q && !canAdvanceQ) {
+        const defaultVal = q.type === "multi" ? [] : (q.options?.[0]?.value ?? "");
+        setAnswers((a) => ({ ...a, [q.key]: defaultVal }));
+      }
       setStep((s) => (s + 1) as Step);
     } else {
       setSaving(true);
@@ -397,7 +402,7 @@ export default function QuestionnairePage() {
             <Button variant="outline" onClick={() => setStep((s) => (s - 1) as Step)}>← Back</Button>
             <Button
               onClick={handleNext}
-              disabled={!canAdvanceQ || saving}
+              disabled={saving}
               className="flex-1"
             >
               {saving ? "Saving…" : step === QUESTIONS.length + 1 ? "Continue to Wardrobe →" : "Next →"}

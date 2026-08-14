@@ -153,7 +153,14 @@ export default function RecommendationsPage() {
       const makeBody = (rec: Recommendation | undefined, feedback?: string) => ({
         outfit_id: rec?.outfit_id || crypto.randomUUID(),
         user_id: storedUserId,
-        items: (rec?.items || []).map((i) => ({ item_id: i.item_id || crypto.randomUUID(), category: i.category, description: i.description, color: i.color })),
+        // Include image_url so backend can fetch actual dress photos for generation
+        items: (rec?.items || []).map((i) => ({
+          item_id: i.item_id || crypto.randomUUID(),
+          category: i.category,
+          description: i.description,
+          color: i.color,
+          image_url: i.image_url || "",
+        })),
         face_profile: faceProfile,
         occasion: sessionStorage.getItem("situation_text") || "Casual",
         selfie_b64: selfieB64,
