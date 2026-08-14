@@ -1,6 +1,14 @@
-// Render passes just the hostname via fromService.host; ensure we have a full URL
+// Render's fromService.host gives a bare hostname (e.g. "my-svc-xyz")
+// without ".onrender.com". This normalises all possible formats to a full URL.
 const _rawApiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const API_BASE = _rawApiUrl.startsWith("http") ? _rawApiUrl : `https://${_rawApiUrl}`;
+let API_BASE: string;
+if (_rawApiUrl.startsWith("http")) {
+  API_BASE = _rawApiUrl;                                   // already full URL
+} else if (_rawApiUrl.includes(".")) {
+  API_BASE = `https://${_rawApiUrl}`;                      // hostname.domain
+} else {
+  API_BASE = `https://${_rawApiUrl}.onrender.com`;         // bare Render service name
+}
 
 // ── Auth ───────────────────────────────────────────────────────────────────
 
