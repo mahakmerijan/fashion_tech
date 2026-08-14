@@ -39,6 +39,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "https://styleai.app",
+        "https://styleai-frontend.onrender.com",
         "https://fashion-tech-frontend.onrender.com",
     ],
     allow_credentials=True,
