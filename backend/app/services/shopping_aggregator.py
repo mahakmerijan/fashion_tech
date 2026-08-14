@@ -514,209 +514,70 @@ async def get_specific_product_links(
     situation: str = "",
 ) -> list[dict]:
     """
-    For each missing wardrobe item:
-    1. Search Snitch & Rare Rabbit via Shopify JSON API (real product pages, price-filtered)
-    2. Fall back to Gemini grounding for Amazon/Flipkart direct product pages
-    3. Last resort: price-filtered category/search URLs
+    For each missing wardrobe item find an actual product on Snitch or Rare Rabbit
+    within the user's selected budget range via Shopify JSON API.
 
-    Every returned URL leads to an actual product page on Snitch or Rare Rabbit
-    (or a direct product page on Amazon/Flipkart), never a generic search result.
+    Strategy per item:
+    1. Try Snitch  — exact category collection filtered by price
+    2. Try Rare Rabbit — exact category collection filtered by price
+    3. If neither finds a price-matching product, relax price and try again (show
+       closest product so the user still gets a real link, never a search result)
+
+    Returns: list of dicts with real product-page URLs, Shopify image, price, name.
     """
-    import json as _json
-    from app.services.image_generator import get_client
-    from google.genai import types as gtypes
-
     if not missing_items:
         return []
 
     price_min, price_max = _parse_budget_range(budget) if budget else (0, 0)
-    gender_word = "women" if gender == "women" else "men"
-    skin_note = f"Skin tone: {skin_tone} — suggest complementary colours." if skin_tone else ""
 
-    items_text = "\n".join(
-        f"- {i.get('color', '')} {i.get('description', i.get('category', ''))} (category: {i.get('category', '')})"
-        for i in missing_items
-    )
+    # Alternate brand per item so the user sees variety
+    # Snitch → menswear only; Rare Rabbit → menswear + some womenswear
+    async def _get_for_item(item: dict, prefer_snitch: bool) -> dict:
+        cat = item.get("category", "shirt")
+        color = item.get("color", "")
+        desc = item.get("description", cat)
+        for_item = desc
 
-    budget_instruction = (
-        f"Budget: STRICTLY {budget} per item — suggest only products in this price range."
-        if budget else "No budget constraint."
-    )
+        # Try primary brand first, then secondary
+        primary = search_snitch if prefer_snitch else search_rarerabbit
+        secondary = search_rarerabbit if prefer_snitch else search_snitch
 
-    # Snitch & Rare Rabbit are men's brands; for women fall back to Amazon/Flipkart
-    use_d2c_brands = (gender_word == "men")
+        # Pass 1: strict price range
+        hit = await primary(cat, color, desc, price_min, price_max)
+        if not hit or not hit.get("url", "").startswith("http"):
+            hit = await secondary(cat, color, desc, price_min, price_max)
 
-    prompt = f"""You are a fashion expert for Indian e-commerce.
+        # Pass 2: relax price range (show closest product, always real link)
+        if not hit or not hit.get("url", "").startswith("http"):
+            hit = await primary(cat, color, desc, 0, 0)
+        if not hit or not hit.get("url", "").startswith("http"):
+            hit = await secondary(cat, color, desc, 0, 0)
 
-The user needs these items for: {situation}
-Gender: {gender_word}
-{skin_note}
-{budget_instruction}
+        if hit and hit.get("url", "").startswith("http"):
+            return {**hit, "for_item": for_item, "from_image": True}
 
-Items needed (NOT in their wardrobe):
-{items_text}
+        # Absolute last resort: collection page (still real, not a generic search)
+        col_snitch = _SNITCH_CAT_MAP.get(cat.lower(), "all")
+        color_param = f"?color={color.replace(' ', '+')}" if color else ""
+        return {
+            "name": desc,
+            "price": budget or "",
+            "url": f"https://www.snitch.co.in/collections/{col_snitch}{color_param}",
+            "image_url": "",
+            "platform": "Snitch",
+            "for_item": for_item,
+            "from_image": True,
+        }
 
-For EACH item, suggest EXACTLY 2 specific products.
-{
-    "Prefer Snitch (snitch.co.in) or Rare Rabbit (thehouseofrare.com) when the item fits their menswear range. Fall back to Amazon India or Flipkart only for items these brands don't carry (women's wear, kids, etc.)."
-    if use_d2c_brands else
-    "Use Amazon India or Flipkart."
-}
-Include brand name and exact product model/style/colour.
+    # Run all items concurrently, alternating Snitch / Rare Rabbit
+    tasks = [_get_for_item(item, i % 2 == 0) for i, item in enumerate(missing_items)]
+    results = list(await asyncio.gather(*tasks, return_exceptions=False))
 
-Return ONLY a JSON array ({len(missing_items) * 2} entries total, 2 per item):
-[
-  {{
-    "for_item": "exact description of the item this satisfies",
-    "brand": "Snitch|Rare Rabbit|Brand Name",
-    "product_name": "Exact model/style name with colour",
-    "estimated_price": "₹X,XXX",
-    "category": "shirt|t-shirt|jeans|trousers|jacket|etc",
-    "color": "primary colour keyword",
-    "platform": "Snitch|Rare Rabbit|Amazon|Flipkart",
-    "search_query": "Brand + model + colour — specific enough to find this exact product"
-  }}
-]
+    # Ensure every entry has proper structure
+    clean: list[dict] = []
+    for r in results:
+        if isinstance(r, dict):
+            clean.append(r)
 
-STRICT RULES:
-- Be VERY SPECIFIC with product_name and color
-{f"- Price MUST be within {budget}" if budget else ""}
-- For Snitch/Rare Rabbit, the category field is critical for finding the right product
-Return ONLY the JSON array."""
-
-    results: list[dict] = []
-    try:
-        client = get_client()
-        resp = client.models.generate_content(
-            model=settings.GEMINI_MODEL_RECOMMEND,
-            contents=prompt,
-            config=gtypes.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.2,
-                max_output_tokens=1400,
-            ),
-        )
-        products = _json.loads(resp.text)
-        if not isinstance(products, list):
-            products = []
-
-        # Fire Snitch + Rare Rabbit Shopify lookups concurrently
-        shopify_tasks = []
-        for p in products:
-            platform = p.get("platform", "Amazon")
-            cat = p.get("category", p.get("for_item", "shirt"))
-            color = p.get("color", "")
-            desc = p.get("product_name", "")
-            if platform == "Snitch" and use_d2c_brands:
-                shopify_tasks.append(("snitch", p, search_snitch(cat, color, desc, price_min, price_max)))
-            elif platform == "Rare Rabbit" and use_d2c_brands:
-                shopify_tasks.append(("rarerabbit", p, search_rarerabbit(cat, color, desc, price_min, price_max)))
-            else:
-                shopify_tasks.append((platform.lower(), p, None))
-
-        # Resolve Shopify coroutines concurrently
-        shopify_results = await asyncio.gather(
-            *[t[2] if t[2] is not None else asyncio.sleep(0, result=None) for t in shopify_tasks],
-            return_exceptions=True,
-        )
-
-        for idx, (src, p, _) in enumerate(shopify_tasks):
-            shopify_hit = shopify_results[idx] if not isinstance(shopify_results[idx], Exception) else None
-            for_item = p.get("for_item", "")
-            name = f"{p.get('brand', '')} — {p.get('product_name', '')}".strip(" —") or p.get("search_query", "")
-            price_str = p.get("estimated_price", "")
-            search_q = p.get("search_query") or name
-            platform_name = p.get("platform", "Amazon")
-
-            if shopify_hit and isinstance(shopify_hit, dict) and shopify_hit.get("url"):
-                # Real Shopify product page from Snitch or Rare Rabbit
-                results.append({
-                    "name": shopify_hit.get("name", name),
-                    "price": shopify_hit.get("price") or price_str,
-                    "url": shopify_hit["url"],
-                    "image_url": shopify_hit.get("image_url", ""),
-                    "platform": shopify_hit.get("platform", platform_name),
-                    "for_item": for_item,
-                    "from_image": True,
-                })
-            elif src in ("amazon", "flipkart"):
-                # Try Gemini grounding for real Amazon/Flipkart product page
-                scraped = None
-                try:
-                    scraped = await _find_product_url_via_gemini(search_q, platform_name, price_min, price_max)
-                except Exception:
-                    pass
-                if scraped and scraped.get("url"):
-                    results.append({
-                        "name": scraped.get("name", name),
-                        "price": scraped.get("price") or price_str,
-                        "url": scraped["url"],
-                        "image_url": "",
-                        "platform": scraped.get("platform", platform_name),
-                        "for_item": for_item,
-                        "from_image": True,
-                    })
-                else:
-                    fallback_url = _platform_shopping_url(search_q, platform_name, gender_word, price_min, price_max)
-                    results.append({
-                        "name": name,
-                        "price": price_str,
-                        "url": fallback_url,
-                        "image_url": "",
-                        "platform": platform_name,
-                        "for_item": for_item,
-                        "from_image": True,
-                    })
-            else:
-                # Snitch/Rare Rabbit Shopify lookup failed — use category collection URL
-                cat = p.get("category", "")
-                color = p.get("color", "")
-                if platform_name == "Snitch":
-                    collection = _SNITCH_CAT_MAP.get(cat.lower(), "all")
-                    color_param = f"?color={color.replace(' ', '+')}" if color else ""
-                    fallback_url = f"https://www.snitch.co.in/collections/{collection}{color_param}"
-                elif platform_name == "Rare Rabbit":
-                    collection = _RARERABBIT_CAT_MAP.get(cat.lower(), "rare-rabbit-all-product")
-                    fallback_url = f"https://thehouseofrare.com/collections/{collection}"
-                else:
-                    fallback_url = _platform_shopping_url(search_q, platform_name, gender_word, price_min, price_max)
-                results.append({
-                    "name": name,
-                    "price": price_str,
-                    "url": fallback_url,
-                    "image_url": "",
-                    "platform": platform_name,
-                    "for_item": for_item,
-                    "from_image": True,
-                })
-
-    except Exception as e:
-        logger.error("get_specific_product_links failed: %s", e)
-        # Emergency fallback: try Snitch/Rare Rabbit directly per item
-        for i, item in enumerate(missing_items):
-            cat = item.get("category", "shirt")
-            color = item.get("color", "")
-            desc = item.get("description", cat)
-            if use_d2c_brands and i % 2 == 0:
-                hit = await search_snitch(cat, color, desc, price_min, price_max)
-            elif use_d2c_brands:
-                hit = await search_rarerabbit(cat, color, desc, price_min, price_max)
-            else:
-                hit = None
-            if hit:
-                results.append({**hit, "for_item": desc, "from_image": True})
-            else:
-                platform = ["Flipkart", "Amazon"][i % 2]
-                query = f"{color} {desc} {gender_word}".strip()
-                url = _platform_shopping_url(query, platform, gender_word, price_min, price_max)
-                results.append({
-                    "name": desc,
-                    "price": budget or "",
-                    "url": url,
-                    "image_url": "",
-                    "platform": platform,
-                    "for_item": desc,
-                    "from_image": True,
-                })
-
-    return results
+    logger.info("Shopping results: %d items, budget=%s", len(clean), budget)
+    return clean
