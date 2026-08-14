@@ -371,9 +371,14 @@ export default function RecommendationsPage() {
                 <CardContent className="space-y-2">
                   {rec.items.map((item: OutfitItem, i: number) => (
                     <div key={i} className="flex items-center gap-3 p-3 bg-violet-50 border border-violet-100 rounded-xl">
-                      <span className="text-2xl">{categoryEmoji(item.category)}</span>
-                      <div>
-                        <p className="font-medium text-sm text-slate-800">{item.description}</p>
+                      {item.image_url ? (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img src={item.image_url} alt={item.description} className="w-14 h-14 rounded-lg object-cover border border-violet-200 flex-shrink-0" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                      ) : (
+                        <span className="text-2xl flex-shrink-0">{categoryEmoji(item.category)}</span>
+                      )}
+                      <div className="min-w-0">
+                        <p className="font-medium text-sm text-slate-800 truncate">{item.description}</p>
                         <p className="text-xs text-slate-400">{item.color} · {item.category}</p>
                       </div>
                       {item.from_wardrobe && <Badge variant="secondary" className="ml-auto text-xs shrink-0">Your wardrobe</Badge>}
@@ -461,19 +466,27 @@ function categoryEmoji(cat: string) {
   return map[cat] ?? "👔";
 }
 
-// ── ProductCard: lazy-loads a Gemini-generated product image ──────────────────
+// ── ProductCard: shows Shopify image when available, else Gemini-generated ────
 function ProductCard({ result: r }: { result: ShoppingResult }) {
   const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-  const [imgSrc, setImgSrc] = useState<string | null>(null);
+  const [imgSrc, setImgSrc] = useState<string | null>(
+    // Use Shopify image_url directly if provided (from Snitch/Rare Rabbit Shopify API)
+    r.image_url && r.image_url.startsWith("http") ? r.image_url : null
+  );
 
-  // Extract category and color from the product name for the image endpoint
-  const nameParts = r.name?.split(" on ")[0] || "";
-  const category = nameParts.toLowerCase().replace(/\s+/g, "-");
   const forItem = r.for_item || "";
+  const category = (r.name?.split(" on ")[0] || "").toLowerCase().replace(/\s+/g, "-");
   const colorMatch = forItem.match(/\b(navy|black|white|grey|gray|brown|beige|red|blue|green|cream|khaki|olive|orange|pink|purple|tan)\b/i);
   const color = colorMatch ? colorMatch[1].toLowerCase() : "";
-
   const imgUrl = `${API}/api/products/image?category=${encodeURIComponent(category)}&color=${encodeURIComponent(color)}&description=${encodeURIComponent(forItem.slice(0, 60))}`;
+
+  const platformColor: Record<string, string> = {
+    "Snitch": "bg-orange-100 text-orange-700",
+    "Rare Rabbit": "bg-purple-100 text-purple-700",
+    "Amazon": "bg-yellow-100 text-yellow-800",
+    "Flipkart": "bg-blue-100 text-blue-700",
+  };
+  const badgeClass = platformColor[r.platform] || "bg-slate-100 text-slate-600";
 
   return (
     <a
@@ -484,21 +497,16 @@ function ProductCard({ result: r }: { result: ShoppingResult }) {
     >
       {/* Product image */}
       <div className="aspect-square bg-slate-50 relative overflow-hidden">
-        {imgSrc === null ? (
-          // Trigger image load on mount
+        {imgSrc ? (
+          <img src={imgSrc} alt={forItem || category} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" onError={() => setImgSrc("")} />
+        ) : (
           <img
             src={imgUrl}
             alt={forItem || category}
             className="w-full h-full object-cover"
-            onLoad={() => setImgSrc(imgUrl)}
+            onLoad={(e) => setImgSrc((e.target as HTMLImageElement).src)}
             onError={() => setImgSrc("")}
           />
-        ) : imgSrc ? (
-          <img src={imgSrc} alt={forItem || category} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-4xl">
-            {categoryEmoji(nameParts.split(" ")[0] || "Clothing")}
-          </div>
         )}
       </div>
       {/* Info */}
@@ -507,7 +515,7 @@ function ProductCard({ result: r }: { result: ShoppingResult }) {
         {r.name && r.name !== r.for_item && <p className="text-xs text-slate-500 line-clamp-1 italic">{r.name}</p>}
         <div className="flex items-center justify-between gap-1 mt-auto pt-1">
           <span className="text-xs font-bold text-green-700">{r.price || ""}</span>
-          <span className={`text-xs font-semibold rounded-full px-2 py-0.5 ${r.platform === "Google Shopping" ? "bg-blue-100 text-blue-700" : "text-violet-600"}`}>
+          <span className={`text-xs font-semibold rounded-full px-2 py-0.5 ${badgeClass}`}>
             {r.platform} →
           </span>
         </div>

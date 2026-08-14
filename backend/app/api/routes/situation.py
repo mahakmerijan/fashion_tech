@@ -129,6 +129,13 @@ async def situation_recommend(
     budget = prefs.get("budget", "")
     gender = prefs.get("gender", "men").lower().replace("male", "men").replace("female", "women")
 
+    # ── Enrich outfit items with wardrobe image_url ────────────────────────────
+    wardrobe_image_map = {str(i["item_id"]): i.get("image_url", "") for i in wardrobe_list}
+    for outfit in [recommendation, recommendation_2]:
+        for item in outfit.get("items", []):
+            if item.get("from_wardrobe") and item.get("item_id"):
+                item["image_url"] = wardrobe_image_map.get(str(item["item_id"]), "")
+
     # ── Collect all missing items from both outfits ────────────────────────────
     all_missing = recommendation.get("missing_items", []) + recommendation_2.get("missing_items", [])
     # Deduplicate by description

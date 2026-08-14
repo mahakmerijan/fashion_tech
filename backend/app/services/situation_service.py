@@ -184,6 +184,7 @@ PERSON PROFILE:
 - Preferred style: {prefs.get('style_personality') or face.get('style_personality','Smart Casual')}
 - Preferred fit: {prefs.get('fit','Regular Fit')}
 - Favourite colours: {', '.join(prefs.get('favorite_colors') or prefs.get('favourite_colors') or [])}
+- Budget per item: {prefs.get('budget','Not specified')}
 - Experimentation: {prefs.get('experiment_level',3)}/5
 
 SITUATION:
@@ -199,22 +200,34 @@ AVAILABLE WARDROBE ITEMS:
 {wardrobe_text or 'No wardrobe items uploaded.'}
 
 TASK:
-Create TWO distinct outfit options from the wardrobe that suit this situation and venue.
-For each outfit:
-1. Pick 3-5 pieces from the wardrobe — the two outfits must use DIFFERENT combinations
-2. Identify TRULY MISSING items NOT in the wardrobe (different colours/categories not present). Do NOT list wardrobe items as missing.
-3. Match the outfit to the venue ambiance, formality, and user's skin tone/colour season
-4. Give styling tips specific to the venue lighting and setting
-5. Suggest complementary colours
+Create TWO distinct outfit options that suit this situation and venue.
 
-Return ONLY valid JSON with this exact structure:
+CRITICAL RULE — PLACE-WARDROBE TONE MATCHING:
+For each wardrobe item you consider, check if its colour, formality, and style are COMPATIBLE with the place/venue tone described above.
+- If a wardrobe item matches the place tone → include it in the outfit.
+- If a wardrobe item does NOT match the place tone (e.g. very casual item for a formal venue, wrong colour temperature) → DO NOT include it. Instead, add it to "missing_items" as something to buy.
+- If the wardrobe has no suitable items for the venue → ALL pieces go in "missing_items".
+
+SHOPPING BUDGET RULE:
+Budget is: {prefs.get('budget','Not specified')}
+- ALL items in "missing_items" MUST be within this budget range.
+- Do NOT suggest items outside this price range.
+- Prefer Snitch (snitch.co.in) or Rare Rabbit (rarerabbit.in/thehouseofrare.com) for missing men's items.
+
+For each outfit:
+1. Pick only wardrobe items that MATCH the venue tone — max 3-5 pieces
+2. Fill gaps with "missing_items" that ARE in the budget range
+3. Match the outfit to venue ambiance, formality, user's skin tone/colour season
+4. Give styling tips specific to the venue lighting and setting
+
+Return ONLY valid JSON:
 {{
   "outfit_1": {{
     "outfit_id": "unique_id_1",
     "title": "First Outfit Name",
-    "rationale": "Why this works for the situation, venue, and skin tone",
+    "rationale": "Why this works for situation, venue, skin tone, and budget",
     "items": [{{"item_id": "ID", "category": "Shirt", "description": "desc", "color": "color", "from_wardrobe": true}}],
-    "missing_items": [{{"item_id": null, "category": "cat", "description": "what to buy", "color": "color", "from_wardrobe": false}}],
+    "missing_items": [{{"item_id": null, "category": "cat", "description": "what to buy — must be in budget {prefs.get('budget','')}", "color": "color", "from_wardrobe": false}}],
     "styling_tips": ["tip1", "tip2"],
     "color_suggestions": ["suggestion1"],
     "place_outfit_compatibility": "High|Medium|Low",
@@ -222,10 +235,10 @@ Return ONLY valid JSON with this exact structure:
   }},
   "outfit_2": {{
     "outfit_id": "unique_id_2",
-    "title": "Second Outfit Name (different style/pieces from outfit_1)",
+    "title": "Second Outfit Name (different pieces/style from outfit_1)",
     "rationale": "Why this alternative works",
     "items": [{{"item_id": "ID", "category": "Pants", "description": "desc", "color": "color", "from_wardrobe": true}}],
-    "missing_items": [{{"item_id": null, "category": "cat", "description": "what to buy", "color": "color", "from_wardrobe": false}}],
+    "missing_items": [{{"item_id": null, "category": "cat", "description": "what to buy — must be in budget {prefs.get('budget','')}", "color": "color", "from_wardrobe": false}}],
     "styling_tips": ["tip1", "tip2"],
     "color_suggestions": ["suggestion1"],
     "place_outfit_compatibility": "High|Medium|Low",
