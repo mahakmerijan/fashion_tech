@@ -200,47 +200,46 @@ AVAILABLE WARDROBE ITEMS:
 {wardrobe_text or 'No wardrobe items uploaded.'}
 
 TASK:
-Create TWO distinct outfit options that suit this situation and venue.
+Create TWO VISUALLY DISTINCT outfit options for this situation and venue.
 
 CRITICAL RULE — PLACE-WARDROBE TONE MATCHING:
-For each wardrobe item you consider, check if its colour, formality, and style are COMPATIBLE with the place/venue tone described above.
-- If a wardrobe item matches the place tone → include it in the outfit.
-- If a wardrobe item does NOT match the place tone (e.g. very casual item for a formal venue, wrong colour temperature) → DO NOT include it. Instead, add it to "missing_items" as something to buy.
-- If the wardrobe has no suitable items for the venue → ALL pieces go in "missing_items".
+For each wardrobe item, check if its colour, formality, and style are COMPATIBLE with the venue tone above.
+- MATCHES venue tone → include in outfit items (from_wardrobe: true)
+- DOES NOT match venue tone → DO NOT include. Add to missing_items instead (to buy).
+- No suitable wardrobe items → ALL pieces go in missing_items.
+
+RULE — TWO TRULY DIFFERENT OUTFITS:
+- Outfit 1 and Outfit 2 MUST look visually different in photos — different silhouette, different colour palette, different vibe.
+- DO NOT use the same top + same bottom in both outfits.
+- If Outfit 1 is casual (e.g. t-shirt + chinos), Outfit 2 must be a different formality tier (e.g. shirt + trousers) or completely different style.
+- If both use the same wardrobe item, that is FORBIDDEN. Each wardrobe piece may appear in only ONE outfit.
+- Different missing_items too — Outfit 1 and Outfit 2 missing items must differ in category or colour.
 
 SHOPPING BUDGET RULE:
-Budget is: {prefs.get('budget','Not specified')}
-- ALL items in "missing_items" MUST be within this budget range.
-- Do NOT suggest items outside this price range.
-- Prefer Snitch (snitch.co.in) or Rare Rabbit (rarerabbit.in/thehouseofrare.com) for missing men's items.
-
-For each outfit:
-1. Pick only wardrobe items that MATCH the venue tone — max 3-5 pieces
-2. Fill gaps with "missing_items" that ARE in the budget range
-3. Match the outfit to venue ambiance, formality, user's skin tone/colour season
-4. Give styling tips specific to the venue lighting and setting
+Budget: {prefs.get('budget','Not specified')}
+- ALL missing_items MUST be within this budget. Prefer Snitch or Rare Rabbit for men's items.
 
 Return ONLY valid JSON:
 {{
   "outfit_1": {{
     "outfit_id": "unique_id_1",
-    "title": "First Outfit Name",
-    "rationale": "Why this works for situation, venue, skin tone, and budget",
-    "items": [{{"item_id": "ID", "category": "Shirt", "description": "desc", "color": "color", "from_wardrobe": true}}],
-    "missing_items": [{{"item_id": null, "category": "cat", "description": "what to buy — must be in budget {prefs.get('budget','')}", "color": "color", "from_wardrobe": false}}],
+    "title": "Outfit 1 name — describe the visual style in 4-6 words",
+    "color_palette": "primary colours used e.g. Navy + Beige + White",
+    "rationale": "Why this outfit works for the venue, situation, skin tone, and budget",
+    "items": [{{"item_id": "ID", "category": "Shirt", "description": "precise desc", "color": "color", "from_wardrobe": true}}],
+    "missing_items": [{{"item_id": null, "category": "cat", "description": "what to buy within budget {prefs.get('budget','')}", "color": "color", "from_wardrobe": false}}],
     "styling_tips": ["tip1", "tip2"],
-    "color_suggestions": ["suggestion1"],
     "place_outfit_compatibility": "High|Medium|Low",
     "confidence": 0.92
   }},
   "outfit_2": {{
     "outfit_id": "unique_id_2",
-    "title": "Second Outfit Name (different pieces/style from outfit_1)",
-    "rationale": "Why this alternative works",
-    "items": [{{"item_id": "ID", "category": "Pants", "description": "desc", "color": "color", "from_wardrobe": true}}],
-    "missing_items": [{{"item_id": null, "category": "cat", "description": "what to buy — must be in budget {prefs.get('budget','')}", "color": "color", "from_wardrobe": false}}],
+    "title": "Outfit 2 name — DIFFERENT style from Outfit 1",
+    "color_palette": "DIFFERENT colour palette from Outfit 1",
+    "rationale": "Why this DIFFERENT look works — must use different items than Outfit 1",
+    "items": [{{"item_id": "ID", "category": "Pants", "description": "precise desc", "color": "color", "from_wardrobe": true}}],
+    "missing_items": [{{"item_id": null, "category": "cat", "description": "what to buy within budget {prefs.get('budget','')}", "color": "color", "from_wardrobe": false}}],
     "styling_tips": ["tip1", "tip2"],
-    "color_suggestions": ["suggestion1"],
     "place_outfit_compatibility": "High|Medium|Low",
     "confidence": 0.88
   }}
@@ -253,7 +252,7 @@ Return ONLY valid JSON:
             contents=prompt,
             config=gtypes.GenerateContentConfig(
                 response_mime_type="application/json",
-                temperature=0.3,
+                temperature=0.5,   # higher temperature = more creative differentiation
                 max_output_tokens=3000,
             ),
         )
@@ -465,27 +464,41 @@ async def generate_composite_image(state: SituationState) -> dict:
                 items2 = rec2.get("items", [])
                 outfit_parts2 = [f"{i.get('color','')} {i.get('description','')}" for i in items2[:4]]
                 outfit_str2 = ", ".join(p for p in outfit_parts2 if p)
+                color_palette2 = rec2.get("color_palette", "")
 
                 # Fetch dress images for outfit 2
                 dress_urls2 = [wardrobe_image_map.get(str(i.get("item_id", "")), "") for i in items2[:4]]
                 fetched2 = await _asyncio.gather(*[_fetch(u) for u in dress_urls2], return_exceptions=True)
                 dress_images2 = [compress_image(f, 512) for f in fetched2 if isinstance(f, bytes) and len(f) > 1000]
 
+                # Outfit 1 summary for contrast instruction
+                outfit_str1 = ", ".join(
+                    f"{i.get('color','')} {i.get('description','')}"
+                    for i in items[:4] if i.get('description')
+                )
+
                 ref2 = []; idx2 = 1
                 if has_selfie:
-                    ref2.append(f"IMAGE {idx2}: selfie — same person"); idx2 += 1
+                    ref2.append(f"IMAGE {idx2}: selfie — same person, face, skin tone"); idx2 += 1
                 for n2 in range(len(dress_images2)):
-                    ref2.append(f"IMAGE {idx2+n2}: clothing item {n2+1} for this DIFFERENT outfit")
+                    ref2.append(f"IMAGE {idx2+n2}: OUTFIT 2 clothing item {n2+1} — render this garment on the person")
                 idx2 += len(dress_images2)
                 if has_place:
-                    ref2.append(f"IMAGE {idx2}: same venue")
+                    ref2.append(f"IMAGE {idx2}: same venue/place")
 
                 prompt2 = (
-                    f"Professional fashion editorial of a {subject}.\n"
+                    f"Professional fashion editorial of a {subject} — OUTFIT OPTION 2.\n"
                     + (f"Reference images:\n" + "\n".join(f"- {r}" for r in ref2) + "\n\n" if ref2 else "")
-                    + f"DIFFERENT outfit from the previous look: {outfit_str2}\n"
-                    f"{style_ctx}\nOccasion: {state.get('situation_text','casual')}\n"
-                    f"Same rules: natural proportions, seamless photograph, full body shot."
+                    + f"OUTFIT 2 clothing (MUST look visually different from Outfit 1):\n"
+                    f"  Outfit 2: {outfit_str2}\n"
+                    f"  Colour palette: {color_palette2 or 'different from outfit 1'}\n\n"
+                    f"CONTRAST FROM OUTFIT 1 (which was: {outfit_str1[:120]}):\n"
+                    f"  - The clothing colours, style, and silhouette must be NOTICEABLY different\n"
+                    f"  - If Outfit 1 was casual, Outfit 2 must be more structured or vice versa\n"
+                    f"  - Different layering, different colour temperature\n\n"
+                    f"User style: {style_ctx}\n"
+                    f"Occasion: {state.get('situation_text','casual')}\n"
+                    f"Rules: natural anatomy, seamless editorial photograph, full body shot."
                 )
                 contents2 = _build_contents(prompt2, selfie_bytes, dress_images2, place_compressed)
                 resp2 = client.models.generate_content(
