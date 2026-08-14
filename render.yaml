@@ -58,7 +58,4 @@ services:
     plan: free
     envVars:
       - key: NEXT_PUBLIC_API_URL
-        fromService:
-          name: styleai-backend
-          type: web
-          property: host
+        value: https://styleai-backend-tlkc.onrender.com
