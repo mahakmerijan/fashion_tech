@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -9,13 +10,45 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 function resolveImageUrl(url: string): string {
   if (!url) return "";
-  if (url.startsWith("data:")) return url;   // base64 data URL — use as-is
+  if (url.startsWith("data:")) return url;
   if (url.startsWith("http")) return url;
   return `${API}${url}`;
 }
 
 export default function DashboardPage() {
-  const { faceProfile, preferences, wardrobe } = useUserStore();
+  const { userId, faceProfile, preferences, wardrobe, setFaceProfile } = useUserStore();
+  const [reanalyzing, setReanalyzing] = useState(false);
+
+  // Auto-retry face analysis if face_shape is blank (Gemini failed during onboarding)
+  useEffect(() => {
+    if (faceProfile && !faceProfile.face_shape && !reanalyzing) {
+      const selfieB64 = typeof window !== "undefined" ? localStorage.getItem("selfie_b64") : null;
+      if (!selfieB64) return;
+      setReanalyzing(true);
+      (async () => {
+        try {
+          const raw = selfieB64.split(",").pop() || selfieB64;
+          const byteArr = Uint8Array.from(atob(raw), c => c.charCodeAt(0));
+          const blob = new Blob([byteArr], { type: "image/jpeg" });
+          const fd = new FormData();
+          fd.append("image", blob, "selfie.jpg");
+          if (userId) fd.append("user_id", userId);
+          const res = await fetch(`${API}/api/face/analyze`, { method: "POST", body: fd });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.face_profile?.face_shape) {
+              setFaceProfile(data.face_profile);
+            }
+          }
+        } catch (e) {
+          console.error("Re-analysis failed:", e);
+        } finally {
+          setReanalyzing(false);
+        }
+      })();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [faceProfile]);
 
   return (
     <div className="min-h-screen bg-[#f8f7ff]">
@@ -42,16 +75,21 @@ export default function DashboardPage() {
         {faceProfile && (
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">🪞 Face Profile</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                🪞 Face Profile
+                {reanalyzing && <span className="text-xs font-normal text-violet-500 animate-pulse ml-2">Re-analysing…</span>}
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                {Object.entries(faceProfile).filter(([k]) => !k.includes("hex")).map(([key, val]) => (
-                  <div key={key} className="bg-violet-50 rounded-xl p-3">
-                    <p className="text-xs text-slate-400 capitalize">{key.replace(/_/g, " ")}</p>
-                    <p className="font-semibold text-slate-800 mt-0.5">{String(val)}</p>
-                  </div>
-                ))}
+                {Object.entries(faceProfile)
+                  .filter(([k]) => !k.includes("hex") && String(faceProfile[k as keyof typeof faceProfile]))
+                  .map(([key, val]) => (
+                    <div key={key} className="bg-violet-50 rounded-xl p-3">
+                      <p className="text-xs text-slate-400 capitalize">{key.replace(/_/g, " ")}</p>
+                      <p className="font-semibold text-slate-800 mt-0.5">{String(val)}</p>
+                    </div>
+                  ))}
               </div>
             </CardContent>
           </Card>

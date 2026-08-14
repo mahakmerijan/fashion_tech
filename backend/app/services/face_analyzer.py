@@ -168,9 +168,23 @@ async def analyze_face(image_bytes: bytes) -> dict:
             ),
         )
         features: dict = json.loads(response.text)
+        # Retry once if face_shape came back empty
+        if not features.get("face_shape"):
+            logger.warning("face_shape empty on first attempt, retrying once…")
+            retry_resp = client.models.generate_content(
+                model=settings.GEMINI_MODEL_ANALYZE,
+                contents=[ANALYSIS_PROMPT, img_part],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.2,
+                ),
+            )
+            retry_features = json.loads(retry_resp.text)
+            if retry_features.get("face_shape"):
+                features = retry_features
     except Exception as e:
         logger.error("Gemini face analysis failed: %s", e)
-        # Fallback — do NOT default face_shape; leave blank so UI knows it wasn't detected
+        # Fallback — leave face_shape blank so dashboard triggers re-analysis
         features = {
             "face_shape": "",
             "skin_tone": "Medium",
