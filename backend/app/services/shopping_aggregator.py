@@ -161,11 +161,12 @@ async def search_snitch(
 
     keywords = [w for w in (color + " " + description).split() if len(w) > 2]
     product = await _fetch_shopify_product(
-        "https://www.snitch.co.in", collection, price_min, price_max, keywords
+        "https://www.snitch.co.in", collection, price_min, price_max, keywords  # API still on snitch.co.in
     )
 
     if product:
         handle = product.get("handle", "")
+        product_id = product.get("id", "")
         title = product.get("title", description or category)
         try:
             price_val = float(product["variants"][0]["price"])
@@ -177,17 +178,19 @@ async def search_snitch(
             image_url = product.get("images", [{}])[0].get("src", "")
         except Exception:
             pass
+        # snitch.com product URL format: /men-{category}/{handle}/{id}/buy
+        product_url = f"https://www.snitch.com/men-{collection}/{handle}/{product_id}/buy"
         return {
             "name": title,
             "price": price_str,
-            "url": f"https://www.snitch.co.in/products/{handle}",
+            "url": product_url,
             "image_url": image_url,
             "platform": "Snitch",
         }
 
-    # Fallback: filtered collection URL
+    # Fallback: snitch.com category page with color filter
     color_param = f"?color={color.replace(' ', '+')}" if color else ""
-    fallback_url = f"https://www.snitch.co.in/collections/{collection}{color_param}"
+    fallback_url = f"https://www.snitch.com/men-{collection}/buy{color_param}"
     return {
         "name": description or f"{color} {category}".strip(),
         "price": "",
@@ -562,7 +565,7 @@ async def get_specific_product_links(
         return {
             "name": desc,
             "price": budget or "",
-            "url": f"https://www.snitch.co.in/collections/{col_snitch}{color_param}",
+            "url": f"https://www.snitch.com/men-{col_snitch}/buy{color_param}",
             "image_url": "",
             "platform": "Snitch",
             "for_item": for_item,
