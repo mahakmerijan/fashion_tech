@@ -56,6 +56,11 @@ _SNITCH_CAT_MAP: dict[str, str] = {
     "accessories": "accessories",
     "co-ords": "co-ords",
     "coords": "co-ords",
+    # Traditional/ethnic → closest Snitch equivalent (linen/casual shirts)
+    "kurta": "shirts",
+    "ethnic": "shirts",
+    "traditional": "shirts",
+    "linen kurta": "shirts",
 }
 
 # Rare Rabbit is on thehouseofrare.com
@@ -81,6 +86,13 @@ _RARERABBIT_CAT_MAP: dict[str, str] = {
     "innerwear": "rare-rabbit-innerwear",
     "accessories": "accessories-for-men",
     "formal": "rare-rabbit-formal-shirt-and-trouser-collection",
+    # Traditional/ethnic wear — Rare Rabbit has linen shirts and some ethnic options
+    "kurta": "rare-rabbit-linen-shirts",
+    "ethnic": "rare-rabbit-linen-shirts",
+    "traditional": "rare-rabbit-linen-shirts",
+    "linen kurta": "rare-rabbit-linen-shirts",
+    "churidar": "rare-rabbit-aw-25-trouser",
+    "pajama": "rare-rabbit-pajama",
 }
 
 

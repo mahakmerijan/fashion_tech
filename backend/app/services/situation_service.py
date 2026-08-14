@@ -364,6 +364,22 @@ async def generate_composite_image(state: SituationState) -> dict:
     has_dresses = len(dress_images) > 0
     has_place = place_bytes is not None
 
+    # Detect if outfit is traditional/ethnic to prevent hallucination
+    outfit_lower = outfit_str.lower()
+    is_traditional = any(w in outfit_lower for w in ["kurta", "churidar", "dhoti", "sherwani", "ethnic", "traditional", "pajama", "bandhgala"])
+    traditional_note = ""
+    if is_traditional:
+        traditional_note = (
+            "\nOUTFIT STYLE: This is traditional/ethnic Indian wear. "
+            "Generate exactly this outfit — do not substitute with western clothes.\n"
+        )
+    else:
+        traditional_note = (
+            "\nOUTFIT STYLE: This is MODERN WESTERN WEAR — shirts, trousers, jackets etc. "
+            "DO NOT generate kurta, churidar, dhoti, sherwani or any ethnic Indian clothing. "
+            "The EXACT clothing items listed below must be visible.\n"
+        )
+
     # Build reference image instructions
     ref_lines = []
     img_idx = 1
@@ -371,7 +387,7 @@ async def generate_composite_image(state: SituationState) -> dict:
         ref_lines.append(f"IMAGE {img_idx} (selfie): match this person's exact face, skin tone, and hair — do NOT alter gender or appearance")
         img_idx += 1
     for n in range(len(dress_images)):
-        ref_lines.append(f"IMAGE {img_idx + n}: actual clothing item {n+1} — reproduce this garment accurately on the person's body")
+        ref_lines.append(f"IMAGE {img_idx + n}: actual clothing item {n+1} — reproduce this EXACT garment on the person's body, do not substitute")
     img_idx += len(dress_images)
     if has_place:
         ref_lines.append(f"IMAGE {img_idx} (venue): place the person naturally inside this setting with matching lighting")
@@ -381,14 +397,17 @@ async def generate_composite_image(state: SituationState) -> dict:
     if ref_lines:
         image_prompt = (
             f"Professional fashion editorial photograph of a {subject}.\n"
+            f"OUTFIT 1 — EXACT CLOTHING TO SHOW:\n"
+            f"  {outfit_str}\n"
+            f"{traditional_note}\n"
             f"Reference images:\n{ref_block}\n\n"
-            f"RULES:\n"
+            f"STRICT RULES:\n"
             f"- Preserve exact person from selfie (face, skin, hair)\n"
-            f"- Render the actual clothing from dress reference images on the person\n"
+            f"- Show THE EXACT CLOTHING listed above — not what you think suits the occasion\n"
+            f"- If dress images are provided, render those exact garments on the person\n"
             f"- Natural anatomy: head-to-body ratio ~1:7, realistic full-body proportions\n"
             f"- Single seamless editorial photograph — NOT a collage or composite\n"
-            f"Outfit: {outfit_str}\n"
-            f"User style context: {style_ctx}\n"
+            f"User style: {style_ctx}\n"
             f"Occasion: {state.get('situation_text', 'casual')}\n"
             f"Full body shot, professional fashion photography, sharp details."
         )
@@ -476,26 +495,33 @@ async def generate_composite_image(state: SituationState) -> dict:
                     f"{i.get('color','')} {i.get('description','')}"
                     for i in items[:4] if i.get('description')
                 )
+                outfit2_lower = outfit_str2.lower()
+                is_traditional2 = any(w in outfit2_lower for w in ["kurta","churidar","dhoti","sherwani","ethnic","traditional","pajama","bandhgala"])
+                trad_note2 = (
+                    "\nOUTFIT STYLE: Traditional/ethnic Indian wear — generate exactly this.\n"
+                    if is_traditional2 else
+                    "\nOUTFIT STYLE: MODERN WESTERN WEAR. DO NOT generate kurta/churidar/ethnic clothing.\n"
+                )
 
                 ref2 = []; idx2 = 1
                 if has_selfie:
                     ref2.append(f"IMAGE {idx2}: selfie — same person, face, skin tone"); idx2 += 1
                 for n2 in range(len(dress_images2)):
-                    ref2.append(f"IMAGE {idx2+n2}: OUTFIT 2 clothing item {n2+1} — render this garment on the person")
+                    ref2.append(f"IMAGE {idx2+n2}: OUTFIT 2 clothing item {n2+1} — render this EXACT garment on the person")
                 idx2 += len(dress_images2)
                 if has_place:
                     ref2.append(f"IMAGE {idx2}: same venue/place")
 
                 prompt2 = (
                     f"Professional fashion editorial of a {subject} — OUTFIT OPTION 2.\n"
+                    f"OUTFIT 2 — EXACT CLOTHING TO SHOW:\n"
+                    f"  {outfit_str2}\n"
+                    f"  Colour palette: {color_palette2 or 'different from outfit 1'}\n"
+                    f"{trad_note2}\n"
                     + (f"Reference images:\n" + "\n".join(f"- {r}" for r in ref2) + "\n\n" if ref2 else "")
-                    + f"OUTFIT 2 clothing (MUST look visually different from Outfit 1):\n"
-                    f"  Outfit 2: {outfit_str2}\n"
-                    f"  Colour palette: {color_palette2 or 'different from outfit 1'}\n\n"
-                    f"CONTRAST FROM OUTFIT 1 (which was: {outfit_str1[:120]}):\n"
-                    f"  - The clothing colours, style, and silhouette must be NOTICEABLY different\n"
-                    f"  - If Outfit 1 was casual, Outfit 2 must be more structured or vice versa\n"
-                    f"  - Different layering, different colour temperature\n\n"
+                    + f"MUST LOOK VISUALLY DIFFERENT FROM OUTFIT 1 (which was: {outfit_str1[:100]}):\n"
+                    f"  - Different colours, different garment types, different silhouette\n"
+                    f"  - Show THE EXACT CLOTHING listed above — not contextual guesses\n\n"
                     f"User style: {style_ctx}\n"
                     f"Occasion: {state.get('situation_text','casual')}\n"
                     f"Rules: natural anatomy, seamless editorial photograph, full body shot."
