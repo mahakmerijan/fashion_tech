@@ -6,7 +6,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useUserStore } from "@/stores/user-store";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API = API_BASE;
+
+import { API_BASE } from "@/lib/api";
 
 function resolveImageUrl(url: string): string {
   if (!url) return "";

@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useUserStore } from "@/stores/user-store";
 
+import { API_BASE } from "@/lib/api";
+
 export default function SituationPage() {
   const router = useRouter();
   const { userId, faceProfile, preferences, wardrobe } = useUserStore();
@@ -53,7 +55,7 @@ export default function SituationPage() {
     if (!situationText.trim()) return;
     setLoading(true);
     try {
-      const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const API = API_BASE;
       const fd = new FormData();
       fd.append("situation_text", situationText);
       fd.append("person_description", personDesc);

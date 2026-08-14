@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef } from "react";import { useRou
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { API_BASE } from "@/lib/api";
 
 interface OutfitItem {
   item_id?: string;
@@ -95,7 +96,7 @@ export default function RecommendationsPage() {
     if (raw) {
       const parsed: SituationResult = JSON.parse(raw);
       setResult(parsed);
-      const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const API = API_BASE;
       const backendImg = parsed.composite_image_url || "";
       const isUsable = backendImg && !backendImg.includes("placehold") && !backendImg.startsWith("__");
       if (isUsable) {
@@ -128,7 +129,7 @@ export default function RecommendationsPage() {
     if (!result) return;
     setGeneratingImage(true);
     try {
-      const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const API = API_BASE;
 
       // ── Face profile from localStorage ───────────────────────────────────
       let faceProfile: Record<string, string> = {};
@@ -468,7 +469,7 @@ function categoryEmoji(cat: string) {
 
 // ── ProductCard: shows Shopify image when available, else Gemini-generated ────
 function ProductCard({ result: r }: { result: ShoppingResult }) {
-  const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const API = API_BASE;
   const [imgSrc, setImgSrc] = useState<string | null>(
     // Use Shopify image_url directly if provided (from Snitch/Rare Rabbit Shopify API)
     r.image_url && r.image_url.startsWith("http") ? r.image_url : null

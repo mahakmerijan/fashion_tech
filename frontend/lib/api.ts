@@ -9,6 +9,7 @@ if (_rawApiUrl.startsWith("http")) {
 } else {
   API_BASE = `https://${_rawApiUrl}.onrender.com`;         // bare Render service name
 }
+export { API_BASE };
 
 // ── Auth ───────────────────────────────────────────────────────────────────
 

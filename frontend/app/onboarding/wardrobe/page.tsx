@@ -8,7 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { useUserStore } from "@/stores/user-store";
 import { uploadWardrobeItems, deleteWardrobeItem } from "@/lib/api";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API = API_BASE;
+
+import { API_BASE } from "@/lib/api";
 
 function resolveImageUrl(url: string): string {
   if (!url) return "";
