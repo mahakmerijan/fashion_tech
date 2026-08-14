@@ -15,10 +15,11 @@ from app.schemas.wardrobe import WardrobeUploadResponse, WardrobeListResponse, W
 router = APIRouter(prefix="/api/wardrobe", tags=["wardrobe"])
 logger = logging.getLogger(__name__)
 
-MAX_IMAGES_PER_UPLOAD = 20
+MAX_IMAGES_PER_UPLOAD = 50  # per batch-chunk — frontend sends 5 at a time
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
 
 # Limit concurrent Gemini Vision calls to avoid rate limits (free tier = 15 RPM)
+# 3 concurrent × ~4s each = ~4s per batch of 5 images
 _GEMINI_SEMAPHORE = asyncio.Semaphore(3)
 
 

@@ -43,51 +43,58 @@ export default function WardrobePage() {
     addFiles(files);
   }, [addFiles]);
 
+  const BATCH_SIZE = 5; // 5 images per request → backend processes 3 concurrently → ~10-15s per batch
+
   const uploadAll = useCallback(async () => {
     const pending = localItems.filter(i => i.status === "pending");
     if (!pending.length) return;
 
-    // Mark all as uploading at once
+    // Mark all pending as "uploading"
     setLocalItems(prev =>
       prev.map(i => pending.some(p => p.localId === i.localId) ? { ...i, status: "uploading" } : i)
     );
 
-    try {
-      // ONE batch request with all images — backend processes with semaphore (max 3 concurrent Gemini calls)
-      const fd = new FormData();
-      pending.forEach(item => fd.append("images", item.file));
+    // Chunk into batches of BATCH_SIZE and process sequentially
+    for (let batchStart = 0; batchStart < pending.length; batchStart += BATCH_SIZE) {
+      const batch = pending.slice(batchStart, batchStart + BATCH_SIZE);
 
-      const result = await uploadWardrobeItems(userId || "temp", fd) as { items: Record<string, unknown>[] };
-      const serverItems = result.items || [];
-      addWardrobeItems(serverItems as unknown as Parameters<typeof addWardrobeItems>[0]);
+      try {
+        // ONE request per chunk — all images in the same FormData
+        const fd = new FormData();
+        batch.forEach(item => fd.append("images", item.file));
 
-      // Mark each local item as done, matched by index to server items
-      setLocalItems(prev =>
-        prev.map(i => {
-          const idx = pending.findIndex(p => p.localId === i.localId);
-          if (idx === -1) return i;
-          return { ...i, status: "done", serverItem: serverItems[idx] };
-        })
-      );
-    } catch (err) {
-      console.error("Batch upload failed:", err);
-      // On failure, retry individually so partial success is captured
-      await Promise.allSettled(
-        pending.map(async (item) => {
-          try {
-            const fd = new FormData();
-            fd.append("images", item.file);
-            const result = await uploadWardrobeItems(userId || "temp", fd) as { items: Record<string, unknown>[] };
-            const serverItems = result.items || [];
-            addWardrobeItems(serverItems as unknown as Parameters<typeof addWardrobeItems>[0]);
-            setLocalItems(prev =>
-              prev.map(i => i.localId === item.localId ? { ...i, status: "done", serverItem: serverItems[0] } : i)
-            );
-          } catch {
-            setLocalItems(prev => prev.map(i => i.localId === item.localId ? { ...i, status: "error" } : i));
-          }
-        })
-      );
+        const result = await uploadWardrobeItems(userId || "temp", fd) as { items: Record<string, unknown>[] };
+        const serverItems = result.items || [];
+        addWardrobeItems(serverItems as unknown as Parameters<typeof addWardrobeItems>[0]);
+
+        // Mark each item in this batch as done
+        setLocalItems(prev =>
+          prev.map(i => {
+            const idx = batch.findIndex(b => b.localId === i.localId);
+            if (idx === -1) return i;
+            return { ...i, status: "done", serverItem: serverItems[idx] };
+          })
+        );
+      } catch (batchErr) {
+        console.error(`Batch ${batchStart / BATCH_SIZE + 1} failed, retrying individually:`, batchErr);
+        // Retry images in this chunk individually so partial success is captured
+        await Promise.allSettled(
+          batch.map(async (item) => {
+            try {
+              const fd = new FormData();
+              fd.append("images", item.file);
+              const result = await uploadWardrobeItems(userId || "temp", fd) as { items: Record<string, unknown>[] };
+              const serverItems = result.items || [];
+              addWardrobeItems(serverItems as unknown as Parameters<typeof addWardrobeItems>[0]);
+              setLocalItems(prev =>
+                prev.map(i => i.localId === item.localId ? { ...i, status: "done", serverItem: serverItems[0] } : i)
+              );
+            } catch {
+              setLocalItems(prev => prev.map(i => i.localId === item.localId ? { ...i, status: "error" } : i));
+            }
+          })
+        );
+      }
     }
   }, [localItems, userId, addWardrobeItems]);
 
