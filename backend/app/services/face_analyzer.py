@@ -64,25 +64,34 @@ FACE_ANALYSIS_SCHEMA = {
     "required": ["face_shape", "skin_tone", "expression_vibe", "style_personality", "color_season"],
 }
 
-ANALYSIS_PROMPT = """Analyse this person's photo carefully and return a JSON object with their facial and style characteristics.
+ANALYSIS_PROMPT = """You are an expert facial analysis AI. Carefully examine this photo and return a precise JSON analysis.
 
-Be precise and objective. Return ONLY a valid JSON object — no markdown, no explanation.
+FACE SHAPE DETECTION — measure these proportions carefully:
+- OVAL: Forehead slightly wider than jaw, face length ~1.5× width, balanced cheeks, gently rounded jaw. Most "default" face shapes.
+- ROUND: Width ≈ length (nearly equal), full cheeks, soft rounded jaw, no sharp angles.
+- SQUARE: Forehead ≈ jaw width (both wide and similar), strong angular jaw, face length ≈ width.
+- HEART: Noticeably wider forehead, prominent cheekbones, sharply narrowing jaw, often a pointed chin.
+- DIAMOND: Narrow forehead AND narrow jaw, widest point is cheekbones (mid-face), angular look.
+- OBLONG/LONG: Face length significantly >1.75× its width, similar forehead and jaw width, long chin.
+- TRIANGLE: Narrow forehead, wider jaw than forehead, prominent wide jawline.
 
-Required JSON schema (return ALL fields):
+Be PRECISE. Do NOT default to Oval if the face has obvious square/round/heart/diamond features.
+
+Return ONLY valid JSON with these fields:
 {
-  "face_shape": "Oval|Round|Square|Heart|Oblong|Diamond",
-  "skin_tone": "Fair|Light|Medium|Tan|Deep|Dark",
+  "face_shape": "Oval|Round|Square|Heart|Diamond|Oblong|Triangle",
+  "skin_tone": "Fair|Light|Medium|Tan|Dark|Deep",
   "skin_tone_level": "Light|Medium|Dark",
-  "eye_color": "string",
-  "hair_color": "string",
-  "expression_vibe": "Approachable-Casual|Bold-Confident|Elegant-Refined|Edgy-Creative|Relaxed-Easy",
-  "style_personality": "Smart Casual|Classic|Streetwear|Minimalist|Bohemian|Athleisure",
+  "eye_color": "observed eye color",
+  "hair_color": "observed hair color",
+  "expression_vibe": "Approachable-Casual|Bold-Confident|Elegant-Refined|Edgy-Creative|Relaxed-Easy|Corporate-Serious|Warm-Friendly",
+  "style_personality": "Smart Casual|Classic|Streetwear|Minimalist|Bohemian|Athleisure|Preppy|Artsy",
   "color_season": "Spring|Summer|Autumn|Winter",
-  "dominant_face_color_hex": "#RRGGBB",
+  "dominant_face_color_hex": "#RRGGBB (hex of skin)",
   "age_range": "18-24|25-34|35-44|45-54|55+",
   "has_facial_hair": true or false,
   "smile_level": "None|Slight|Full",
-  "overall_mood": "string"
+  "overall_mood": "short description"
 }"""
 
 
@@ -161,9 +170,9 @@ async def analyze_face(image_bytes: bytes) -> dict:
         features: dict = json.loads(response.text)
     except Exception as e:
         logger.error("Gemini face analysis failed: %s", e)
-        # Fallback with CV hint
+        # Fallback — do NOT default face_shape; leave blank so UI knows it wasn't detected
         features = {
-            "face_shape": "Oval",
+            "face_shape": "",
             "skin_tone": "Medium",
             "skin_tone_level": "Medium",
             "eye_color": eye_color_hint or "Dark Brown",

@@ -261,9 +261,17 @@ Return ONLY valid JSON with this exact structure:
 async def generate_composite_image(state: SituationState) -> dict:
     """
     Generate an image of the user wearing the recommended outfit AT the specific place.
-    Uses both the user's face profile description and the place image.
-    Cached by hash(face + outfit + place_image_hash).
+    Dynamically includes:
+    - User selfie (face reference)
+    - Actual wardrobe dress images for each recommended item
+    - Place/venue image
+    - User's style preferences, colour season, favourite colours in prompt
+    Cached by hash(face + outfit + place + dress_count).
     """
+    import asyncio as _asyncio
+    import base64 as _b64
+    import httpx
+
     rec = state.get("recommendation", {})
     if not rec or not rec.get("items"):
         return {"composite_image_url": ""}
@@ -273,31 +281,57 @@ async def generate_composite_image(state: SituationState) -> dict:
     items = rec.get("items", [])
     prefs = state.get("preferences", {})
     selfie_b64 = state.get("selfie_b64")
+    wardrobe = state.get("wardrobe", [])
 
-    # Decode selfie if available
+    # Map item_id → image_url from full wardrobe list
+    wardrobe_image_map = {str(w.get("item_id", "")): w.get("image_url", "") for w in wardrobe}
+
+    # Decode selfie
     selfie_bytes: Optional[bytes] = None
     if selfie_b64:
-        import base64 as _b64
         try:
-            raw = selfie_b64.split(",", 1)[-1]
-            selfie_bytes = _b64.b64decode(raw)
+            selfie_bytes = _b64.b64decode(selfie_b64.split(",", 1)[-1])
         except Exception:
-            selfie_bytes = None
+            pass
 
-    # Resolve gender word
+    # Fetch actual dress images from wardrobe URLs concurrently
+    async def _fetch(url: str) -> Optional[bytes]:
+        if not url or not url.startswith("http") or "localhost" in url or "127.0.0" in url:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=8) as c:
+                r = await c.get(url, headers={"User-Agent": "StyleAI/1.0"})
+                if r.status_code == 200 and r.headers.get("content-type", "").startswith("image"):
+                    return r.content
+        except Exception:
+            pass
+        return None
+
+    dress_urls = [wardrobe_image_map.get(str(i.get("item_id", "")), "") for i in items[:4]]
+    fetched_raw = await _asyncio.gather(*[_fetch(u) for u in dress_urls], return_exceptions=True)
+    dress_images = [compress_image(f, 512) for f in fetched_raw if isinstance(f, bytes) and len(f) > 1000]
+
+    # Resolve gender
     gender_raw = (prefs.get("gender") or "").lower()
-    if gender_raw in ("female", "woman"):
-        subject = "woman"
-    elif gender_raw in ("others", "non-binary"):
-        subject = "person"
-    else:
-        subject = "man"
+    subject = "woman" if gender_raw in ("female", "woman") else ("person" if gender_raw in ("others", "non-binary") else "man")
 
-    # Build cache key
+    # Style context from user profile
+    style_hint = prefs.get("style_personality") or face.get("style_personality", "")
+    color_season = face.get("color_season", "")
+    fav_colors = ", ".join(prefs.get("favorite_colors") or prefs.get("favourite_colors") or [])
+    style_ctx = " | ".join(filter(None, [
+        f"Style: {style_hint}" if style_hint else "",
+        f"Colour season: {color_season}" if color_season else "",
+        f"Favourite colours: {fav_colors}" if fav_colors else "",
+    ]))
+
+    # Build cache key (includes dress count so new images invalidate old cache)
     outfit_desc = "|".join(f"{i.get('color','')}_{i.get('description','')}" for i in items)
     place_hash = hashlib.sha256(place_bytes).hexdigest()[:16] if place_bytes else "noplace"
     face_key = f"{face.get('face_shape','')}{face.get('skin_tone','')}{face.get('hair_color','')}"
-    cache_hash = hashlib.sha256(f"{face_key}|{outfit_desc}|{place_hash}".encode()).hexdigest()
+    cache_hash = hashlib.sha256(
+        f"{face_key}|{outfit_desc}|{place_hash}|dress{len(dress_images)}".encode()
+    ).hexdigest()
     cache_key = f"img:situation:{cache_hash}"
 
     cached = await cache_get(cache_key)
@@ -305,97 +339,102 @@ async def generate_composite_image(state: SituationState) -> dict:
         logger.info("Composite image cache HIT %s", cache_hash[:8])
         return {"composite_image_url": cached}
 
-    # Build Gemini image prompt
+    # Build outfit text description
     outfit_parts = [f"{i.get('color','')} {i.get('description','')}" for i in items[:4]]
-    outfit_str = ", ".join(outfit_parts)
-    style_hint = prefs.get("style_personality", "")
-    style_phrase = f" The overall aesthetic is {style_hint}." if style_hint else ""
-
+    outfit_str = ", ".join(p for p in outfit_parts if p)
     face_desc = (
-        f"{subject} with {face.get('face_shape', 'oval')} face shape, "
+        f"{subject} with {face.get('face_shape') or 'defined'} face shape, "
         f"{face.get('skin_tone', 'medium')} skin tone, "
         f"{face.get('hair_color', 'dark')} hair"
     )
 
-    if place_bytes:
-        place_compressed = compress_image(place_bytes)
-        if selfie_bytes:
-            image_prompt = (
-                f"Professional fashion editorial photograph of a {subject}. "
-                f"Match the face, skin tone, and hair from the FIRST reference photo (the selfie). "
-                f"CRITICAL PROPORTIONS: Render with natural human anatomy — face size proportional to the body, "
-                f"correct head-to-body ratio (~1:7), realistic full-body scale. "
-                f"The image must look like a single seamless photograph, not a composite. "
-                f"This is a {subject} — do NOT change the gender or skin tone. "
-                f"Outfit: {outfit_str}.{style_phrase} "
-                f"Place the person naturally inside the venue shown in the SECOND photo. "
-                f"Full body shot, realistic lighting matching the venue, high quality fashion photography."
-            )
-        else:
-            image_prompt = (
-                f"Fashion editorial photograph of a {subject}. "
-                f"IMPORTANT: This is a {subject} — do NOT change the gender. "
-                f"Natural human proportions, correct head-to-body ratio, realistic anatomy. "
-                f"A {face_desc} wearing {outfit_str}.{style_phrase} "
-                f"Standing naturally in the venue shown in this image. "
-                f"Full body shot, natural lighting, high quality fashion photography."
-            )
+    has_selfie = selfie_bytes is not None
+    has_dresses = len(dress_images) > 0
+    has_place = place_bytes is not None
+
+    # Build reference image instructions
+    ref_lines = []
+    img_idx = 1
+    if has_selfie:
+        ref_lines.append(f"IMAGE {img_idx} (selfie): match this person's exact face, skin tone, and hair — do NOT alter gender or appearance")
+        img_idx += 1
+    for n in range(len(dress_images)):
+        ref_lines.append(f"IMAGE {img_idx + n}: actual clothing item {n+1} — reproduce this garment accurately on the person's body")
+    img_idx += len(dress_images)
+    if has_place:
+        ref_lines.append(f"IMAGE {img_idx} (venue): place the person naturally inside this setting with matching lighting")
+
+    ref_block = "\n".join(f"- {r}" for r in ref_lines) if ref_lines else ""
+
+    if ref_lines:
+        image_prompt = (
+            f"Professional fashion editorial photograph of a {subject}.\n"
+            f"Reference images:\n{ref_block}\n\n"
+            f"RULES:\n"
+            f"- Preserve exact person from selfie (face, skin, hair)\n"
+            f"- Render the actual clothing from dress reference images on the person\n"
+            f"- Natural anatomy: head-to-body ratio ~1:7, realistic full-body proportions\n"
+            f"- Single seamless editorial photograph — NOT a collage or composite\n"
+            f"Outfit: {outfit_str}\n"
+            f"User style context: {style_ctx}\n"
+            f"Occasion: {state.get('situation_text', 'casual')}\n"
+            f"Full body shot, professional fashion photography, sharp details."
+        )
     else:
-        place_analysis = state.get("place_analysis", "")
-        if selfie_bytes:
-            image_prompt = (
-                f"Professional fashion editorial photograph of a {subject}. "
-                f"Match the face, skin tone, and hair from the reference photo (the selfie). "
-                f"CRITICAL PROPORTIONS: Render with natural human anatomy — face size proportional to the body, "
-                f"correct head-to-body ratio (~1:7). Must look like a single seamless photograph, not a composite. "
-                f"This is a {subject} — do NOT change the gender or skin tone. "
-                f"Outfit: {outfit_str}.{style_phrase} "
-                f"Setting: {state.get('situation_text', 'casual outdoor')}. "
-                f"Full body shot, professional fashion photography, well-lit, natural proportions."
-            )
-        else:
-            image_prompt = (
-                f"Fashion editorial photograph of a {subject}. "
-                f"IMPORTANT: This is a {subject} — do NOT change the gender. "
-                f"Natural human proportions, correct head-to-body ratio, realistic anatomy. "
-                f"A {face_desc} wearing {outfit_str}.{style_phrase} "
-                f"Setting: {state.get('situation_text', 'casual outdoor')}. "
-                f"Venue ambiance: {place_analysis[:200]}. "
-                f"Full body shot, realistic fashion photography, natural proportions."
-            )
+        image_prompt = (
+            f"Professional fashion editorial of a {subject}. "
+            f"A {face_desc} wearing {outfit_str}. "
+            f"{style_ctx}. "
+            f"Occasion: {state.get('situation_text', 'casual')}. "
+            f"Natural anatomy, correct head-to-body ratio (~1:7), full body shot, "
+            f"studio background, high quality fashion photography."
+        )
+
+    logger.info("Generating composite: selfie=%s dresses=%d place=%s hash=%s",
+                has_selfie, len(dress_images), has_place, cache_hash[:8])
+
+    place_compressed = compress_image(place_bytes) if place_bytes else None
+
+    def _build_contents(prompt: str, s_bytes, d_images, p_compressed) -> list:
+        c: list = [prompt]
+        if s_bytes:
+            c.append(gtypes.Part.from_bytes(data=compress_image(s_bytes), mime_type="image/jpeg"))
+        for d in d_images:
+            c.append(gtypes.Part.from_bytes(data=d, mime_type="image/jpeg"))
+        if p_compressed:
+            c.append(gtypes.Part.from_bytes(data=p_compressed, mime_type="image/jpeg"))
+        return c
 
     try:
         client = get_client()
-
-        # Build contents list with optional selfie and/or place image
-        contents: list = [image_prompt]
-        if selfie_bytes:
-            contents.append(gtypes.Part.from_bytes(data=compress_image(selfie_bytes), mime_type="image/jpeg"))
-        if place_bytes:
-            contents.append(gtypes.Part.from_bytes(data=place_compressed, mime_type="image/jpeg"))
+        contents = _build_contents(image_prompt, selfie_bytes, dress_images, place_compressed)
 
         if len(contents) > 1:
-            # Multimodal: at least one image input
             response = client.models.generate_content(
                 model=settings.GEMINI_MODEL_IMAGE,
                 contents=contents,
-                config=gtypes.GenerateContentConfig(
-                    response_modalities=["IMAGE", "TEXT"],
-                ),
+                config=gtypes.GenerateContentConfig(response_modalities=["IMAGE", "TEXT"]),
             )
-            image_data: Optional[bytes] = None
-            for part in response.candidates[0].content.parts:
-                if part.inline_data and part.inline_data.mime_type.startswith("image"):
-                    image_data = part.inline_data.data
-                    break
         else:
-            # Imagen 4: text-only → image
             img_response = client.models.generate_images(
                 model="imagen-4.0-generate-001",
                 prompt=image_prompt,
                 config=gtypes.GenerateImagesConfig(number_of_images=1),
             )
-            image_data = img_response.generated_images[0].image.image_bytes if img_response.generated_images else None
+            image_bytes_fallback = img_response.generated_images[0].image.image_bytes if img_response.generated_images else None
+            if not image_bytes_fallback:
+                raise ValueError("No image from Imagen")
+            image_url = await upload_image_to_storage(
+                image_bytes_fallback, f"generated/{state['user_id']}/situation_{cache_hash[:12]}.jpg"
+            )
+            await cache_set(cache_key, image_url, settings.CACHE_TTL_IMAGE)
+            return {"composite_image_url": image_url, "composite_image_url_2": ""}
+
+        image_data: Optional[bytes] = None
+        for part in response.candidates[0].content.parts:
+            if part.inline_data and part.inline_data.mime_type.startswith("image"):
+                image_data = part.inline_data.data
+                break
 
         if not image_data:
             raise ValueError("No image returned from model")
@@ -405,7 +444,7 @@ async def generate_composite_image(state: SituationState) -> dict:
         )
         await cache_set(cache_key, image_url, settings.CACHE_TTL_IMAGE)
 
-        # ── Generate second outfit image (outfit_2) ────────────────────────────
+        # ── Generate second outfit image ───────────────────────────────────────
         rec2 = state.get("recommendation_2", {})
         image_url_2 = ""
         if rec2 and rec2.get("items"):
@@ -414,30 +453,28 @@ async def generate_composite_image(state: SituationState) -> dict:
                 outfit_parts2 = [f"{i.get('color','')} {i.get('description','')}" for i in items2[:4]]
                 outfit_str2 = ", ".join(p for p in outfit_parts2 if p)
 
-                if selfie_bytes:
-                    prompt2 = (
-                        f"Professional fashion editorial photograph of a {subject}. "
-                        f"Match the face, skin tone, and hair from the FIRST reference photo (the selfie). "
-                        f"CRITICAL PROPORTIONS: Natural human anatomy, correct head-to-body ratio (~1:7). Single seamless photograph. "
-                        f"This is a {subject} — do NOT change the gender or skin tone. "
-                        f"Outfit (DIFFERENT from previous look): {outfit_str2}.{style_phrase} "
-                        f"Setting: {state.get('situation_text', '')}. "
-                        f"{'Place person in venue shown in second reference photo.' if place_bytes else 'Studio background suited to venue.'} "
-                        f"Full body shot, high quality fashion photography."
-                    )
-                    contents2: list = [prompt2]
-                    contents2.append(gtypes.Part.from_bytes(data=compress_image(selfie_bytes), mime_type="image/jpeg"))
-                    if place_bytes:
-                        contents2.append(gtypes.Part.from_bytes(data=place_compressed, mime_type="image/jpeg"))
-                else:
-                    prompt2 = (
-                        f"Fashion editorial photograph of a {subject}. "
-                        f"A {face_desc} wearing {outfit_str2}.{style_phrase} "
-                        f"DIFFERENT look from any previous generation. "
-                        f"Setting: {state.get('situation_text', '')}. Full body shot."
-                    )
-                    contents2 = prompt2
+                # Fetch dress images for outfit 2
+                dress_urls2 = [wardrobe_image_map.get(str(i.get("item_id", "")), "") for i in items2[:4]]
+                fetched2 = await _asyncio.gather(*[_fetch(u) for u in dress_urls2], return_exceptions=True)
+                dress_images2 = [compress_image(f, 512) for f in fetched2 if isinstance(f, bytes) and len(f) > 1000]
 
+                ref2 = []; idx2 = 1
+                if has_selfie:
+                    ref2.append(f"IMAGE {idx2}: selfie — same person"); idx2 += 1
+                for n2 in range(len(dress_images2)):
+                    ref2.append(f"IMAGE {idx2+n2}: clothing item {n2+1} for this DIFFERENT outfit")
+                idx2 += len(dress_images2)
+                if has_place:
+                    ref2.append(f"IMAGE {idx2}: same venue")
+
+                prompt2 = (
+                    f"Professional fashion editorial of a {subject}.\n"
+                    + (f"Reference images:\n" + "\n".join(f"- {r}" for r in ref2) + "\n\n" if ref2 else "")
+                    + f"DIFFERENT outfit from the previous look: {outfit_str2}\n"
+                    f"{style_ctx}\nOccasion: {state.get('situation_text','casual')}\n"
+                    f"Same rules: natural proportions, seamless photograph, full body shot."
+                )
+                contents2 = _build_contents(prompt2, selfie_bytes, dress_images2, place_compressed)
                 resp2 = client.models.generate_content(
                     model=settings.GEMINI_MODEL_IMAGE,
                     contents=contents2,
