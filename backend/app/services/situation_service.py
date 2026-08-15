@@ -31,7 +31,7 @@ from app.core.config import get_settings
 from app.services.cache_service import (
     cache_get, cache_set, build_and_cache_profile_context,
 )
-from app.services.image_generator import upload_image_to_storage
+from app.services.image_generator import get_client
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -456,9 +456,8 @@ async def generate_composite_image(state: SituationState) -> dict:
             image_bytes_fallback = img_response.generated_images[0].image.image_bytes if img_response.generated_images else None
             if not image_bytes_fallback:
                 raise ValueError("No image from Imagen")
-            image_url = await upload_image_to_storage(
-                image_bytes_fallback, f"generated/{state['user_id']}/situation_{cache_hash[:12]}.jpg"
-            )
+            import base64 as _b64_img
+            image_url = "data:image/jpeg;base64," + _b64_img.b64encode(image_bytes_fallback).decode()
             await cache_set(cache_key, image_url, settings.CACHE_TTL_IMAGE)
             return {"composite_image_url": image_url, "composite_image_url_2": ""}
 
@@ -471,9 +470,8 @@ async def generate_composite_image(state: SituationState) -> dict:
         if not image_data:
             raise ValueError("No image returned from model")
 
-        image_url = await upload_image_to_storage(
-            image_data, f"generated/{state['user_id']}/situation_{cache_hash[:12]}.jpg"
-        )
+        import base64 as _b64_img
+        image_url = "data:image/jpeg;base64," + _b64_img.b64encode(image_data).decode()
         await cache_set(cache_key, image_url, settings.CACHE_TTL_IMAGE)
 
         # ── Generate second outfit image ───────────────────────────────────────
@@ -542,10 +540,9 @@ async def generate_composite_image(state: SituationState) -> dict:
                 )
                 for part2 in resp2.candidates[0].content.parts:
                     if part2.inline_data and part2.inline_data.mime_type.startswith("image"):
-                        image_url_2 = await upload_image_to_storage(
-                            part2.inline_data.data,
-                            f"generated/{state['user_id']}/situation2_{cache_hash[:12]}.jpg"
-                        )
+                        image_url_2 = "data:image/jpeg;base64," + _b64_img.b64encode(
+                            part2.inline_data.data
+                        ).decode()
                         break
             except Exception as e2:
                 logger.warning("Second outfit image failed: %s", e2)

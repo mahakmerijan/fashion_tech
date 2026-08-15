@@ -169,9 +169,11 @@ export default function RecommendationsPage() {
       });
 
       const handleImageResult = (data: { image_url: string }, setter: (url: string) => void) => {
-        if (data.image_url && !data.image_url.includes("placehold")) {
-          const url = data.image_url.startsWith("http") ? data.image_url : `${API}${data.image_url}`;
-          setter(url);
+        const url = data.image_url || "";
+        if (url && !url.includes("placehold")) {
+          // data: URLs are base64-encoded images — use directly
+          // http URLs are CDN/static — use directly
+          setter(url.startsWith("http") || url.startsWith("data:") ? url : `${API}${url}`);
           const staticPath = data.image_url.startsWith("/static/") ? data.image_url : null;
           if (staticPath) {
             const budgetForShop = storeRaw ? (JSON.parse(storeRaw)?.preferences?.budget || JSON.parse(storeRaw)?.state?.preferences?.budget || "") : "";

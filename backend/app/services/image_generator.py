@@ -291,31 +291,30 @@ async def generate_outfit_image(
 
     if not image_data:
         logger.error("All image models failed. Last error: %s", last_error)
-        placeholder = "https://placehold.co/512x768/7c3aed/white?text=Virtual+Try-On"
-        await cache_set(cache_key, placeholder, 300)
-        return {"image_url": placeholder, "from_cache": False, "prompt_hash": prompt_hash}
+        return {"image_url": "", "from_cache": False, "prompt_hash": prompt_hash}
 
-    # 6. Upload to S3/R2
-    image_url = await upload_image_to_storage(image_data, f"generated/{user_id}/{prompt_hash}.jpg")
+    # Return as base64 data URL — no S3/disk needed, works immediately, no ephemeral storage issues
+    b64 = base64.b64encode(image_data).decode("utf-8")
+    image_url = f"data:image/jpeg;base64,{b64}"
 
-    # 7. Persist to DB
+    # Also try to persist to DB (skip if user_id is invalid)
     if db_session:
         from app.db.models import GeneratedImage
         import uuid as _uuid
         try:
-            uid = str(_uuid.UUID(user_id))  # validate and normalise to string
-        except (ValueError, AttributeError):
-            uid = None
-        gen_img = GeneratedImage(
-            user_id=uid,
-            prompt_hash=prompt_hash,
-            image_url=image_url,
-            outfit_description=prompt[:500],
-        )
-        db_session.add(gen_img)
-        await db_session.commit()
+            uid = str(_uuid.UUID(user_id))
+            gen_img = GeneratedImage(
+                user_id=uid,
+                prompt_hash=prompt_hash,
+                image_url="[base64]",  # don't store the full data URL in DB
+                outfit_description=prompt[:500],
+            )
+            db_session.add(gen_img)
+            await db_session.commit()
+        except Exception:
+            pass
 
-    # 8. Cache
+    # Cache the data URL (7-day TTL)
     await cache_set(cache_key, image_url, settings.CACHE_TTL_IMAGE)
 
     return {"image_url": image_url, "from_cache": False, "prompt_hash": prompt_hash}
