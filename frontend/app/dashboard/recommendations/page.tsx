@@ -164,7 +164,10 @@ export default function RecommendationsPage() {
         face_profile: faceProfile,
         occasion: sessionStorage.getItem("situation_text") || "Casual",
         selfie_b64: selfieB64,
-        place_b64: placeB64,
+        // NOTE: place_b64 intentionally omitted — too large for free-tier (causes 502/OOM)
+        // Selfie alone is enough for quality generation
+        user_feedback: feedback?.trim() || undefined,
+      });
         user_feedback: feedback?.trim() || undefined,
       });
 

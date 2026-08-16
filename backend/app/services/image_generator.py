@@ -125,19 +125,25 @@ async def generate_outfit_image(
     if selfie_b64:
         try:
             raw_b64 = selfie_b64.split(",", 1)[-1]
-            selfie_bytes = base64.b64decode(raw_b64)
+            raw = base64.b64decode(raw_b64)
+            # Compress selfie aggressively — only face reference needed, small is fine
+            from PIL import Image as _PIL
+            import io as _io
+            pil = _PIL.open(_io.BytesIO(raw)).convert("RGB")
+            w, h = pil.size
+            scale = min(1.0, 512 / max(w, h))  # max 512px
+            if scale < 1.0:
+                pil = pil.resize((int(w * scale), int(h * scale)), _PIL.LANCZOS)
+            buf = _io.BytesIO()
+            pil.save(buf, format="JPEG", quality=70)
+            selfie_bytes = buf.getvalue()
         except Exception as e:
             logger.warning("Failed to decode selfie_b64: %s", e)
             selfie_bytes = None
 
-    place_bytes: Optional[bytes] = None
-    if place_b64:
-        try:
-            raw_b64 = place_b64.split(",", 1)[-1]
-            place_bytes = base64.b64decode(raw_b64)
-        except Exception as e:
-            logger.warning("Failed to decode place_b64: %s", e)
-            place_bytes = None
+    # NOTE: place_b64 intentionally not decoded here — too large for free-tier
+    # The outfit description text provides enough context for placement
+    place_bytes = None
 
     gender_raw = (face_profile.get("gender") or "").lower()
     if gender_raw in ("female", "woman", "girl"):
@@ -160,43 +166,9 @@ async def generate_outfit_image(
     ]))
     feedback_phrase = f"\nUser feedback: {user_feedback.strip()}." if user_feedback and user_feedback.strip() else ""
 
-    # Fetch actual dress images from wardrobe item URLs (concurrent)
-    import asyncio as _asyncio
-    import httpx as _httpx
-
-    async def _fetch_dress(url: str) -> Optional[bytes]:
-        if not url or not url.startswith("http") or "localhost" in url:
-            return None
-        try:
-            async with _httpx.AsyncClient(timeout=8) as c:
-                r = await c.get(url, headers={"User-Agent": "StyleAI/1.0"})
-                if r.status_code == 200 and r.headers.get("content-type", "").startswith("image"):
-                    return r.content
-        except Exception:
-            pass
-        return None
-
-    dress_urls = [i.get("image_url", "") for i in outfit_items if i.get("image_url")]
-    if dress_urls:
-        fetched_raw = await _asyncio.gather(*[_fetch_dress(u) for u in dress_urls], return_exceptions=True)
-        from PIL import Image as _PILImage
-        import io as _io
-        dress_images: list[bytes] = []
-        for f in fetched_raw:
-            if isinstance(f, bytes) and len(f) > 1000:
-                try:
-                    pil = _PILImage.open(_io.BytesIO(f)).convert("RGB")
-                    w, h = pil.size
-                    scale = min(1.0, 512 / max(w, h))
-                    if scale < 1.0:
-                        pil = pil.resize((int(w * scale), int(h * scale)), _PILImage.LANCZOS)
-                    buf = _io.BytesIO()
-                    pil.save(buf, format="JPEG", quality=85)
-                    dress_images.append(buf.getvalue())
-                except Exception:
-                    pass
-    else:
-        dress_images = []
+    # Skip dress image fetching — adds latency + memory on free tier
+    # The text description of outfit_items is sufficient for generation quality
+    dress_images: list[bytes] = []
 
     # Anti-hallucination: detect outfit type and build structured prompt
     outfit_lower = outfit_desc.lower()
