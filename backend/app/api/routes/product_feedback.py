@@ -88,20 +88,28 @@ async def detect_from_image(body: DetectFromImageRequest):
     """
     Analyze the generated outfit image with Gemini vision.
     Detect all items visible → compare vs wardrobe → return shopping for unmatched items.
+    Accepts both /static/ file paths and data:image/jpeg;base64,... URLs.
     """
-    image_path: Optional[pathlib.Path] = None
-    if body.image_url.startswith("/static/"):
-        local = pathlib.Path("/tmp/styleai") / body.image_url.removeprefix("/static/")
-        if local.exists():
-            image_path = local
+    import base64 as _b64
 
-    if image_path is None:
-        return {"items": [], "detected": []}
+    image_bytes: Optional[bytes] = None
 
-    try:
-        image_bytes = image_path.read_bytes()
-    except Exception as e:
-        logger.warning("Could not read generated image: %s", e)
+    if body.image_url.startswith("data:"):
+        # Base64 data URL — decode directly
+        try:
+            raw = body.image_url.split(",", 1)[-1]
+            image_bytes = _b64.b64decode(raw)
+        except Exception as e:
+            logger.warning("Could not decode base64 image: %s", e)
+    elif body.image_url.startswith("/static/"):
+        image_path = pathlib.Path("/tmp/styleai") / body.image_url.removeprefix("/static/")
+        if image_path.exists():
+            try:
+                image_bytes = image_path.read_bytes()
+            except Exception as e:
+                logger.warning("Could not read generated image: %s", e)
+
+    if image_bytes is None:
         return {"items": [], "detected": []}
 
     gender_str = (body.gender or "men").lower()

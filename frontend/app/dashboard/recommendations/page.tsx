@@ -185,26 +185,28 @@ export default function RecommendationsPage() {
       const handleImageResult = (data: { image_url: string }, setter: (url: string) => void) => {
         const url = data.image_url || "";
         if (url && !url.includes("placehold")) {
-          // data: URLs are base64-encoded images — use directly
-          // http URLs are CDN/static — use directly
           setter(url.startsWith("http") || url.startsWith("data:") ? url : `${API}${url}`);
-          const staticPath = data.image_url.startsWith("/static/") ? data.image_url : null;
-          if (staticPath) {
-            const budgetForShop = storeRaw ? (JSON.parse(storeRaw)?.preferences?.budget || JSON.parse(storeRaw)?.state?.preferences?.budget || "") : "";
-            fetch(`${API}/api/products/detect-from-image`, {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ image_url: staticPath, wardrobe: wardrobeItems, gender: genderForDetect, budget: budgetForShop }),
-            }).then(r => r.json()).then(d => {
-              if (d.items?.length) setFeedbackShoppingResults(prev => {
-                const urls = new Set(prev.map(x => x.url));
-                const fresh = d.items.filter((x: ShoppingResult) => !urls.has(x.url));
-                if (!fresh.length) return prev;
-                const next = [...prev, ...fresh];
-                try { sessionStorage.setItem("feedback_shopping", JSON.stringify(next)); } catch {}
-                return next;
-              });
-            }).catch(() => {});
-          }
+
+          // Detect clothing items in the generated image → populate shopping for unowned items
+          const budgetForShop = storeRaw ? (JSON.parse(storeRaw)?.preferences?.budget || JSON.parse(storeRaw)?.state?.preferences?.budget || "") : "";
+          fetch(`${API}/api/products/detect-from-image`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              image_url: url,          // works for both data: and /static/ URLs
+              wardrobe: wardrobeItems,
+              gender: genderForDetect,
+              budget: budgetForShop,
+            }),
+          }).then(r => r.json()).then(d => {
+            if (d.items?.length) setFeedbackShoppingResults(prev => {
+              const urls = new Set(prev.map((x: ShoppingResult) => x.url));
+              const fresh = d.items.filter((x: ShoppingResult) => !urls.has(x.url));
+              if (!fresh.length) return prev;
+              const next = [...prev, ...fresh];
+              try { sessionStorage.setItem("feedback_shopping", JSON.stringify(next)); } catch {}
+              return next;
+            });
+          }).catch(() => {});
         }
       };
 

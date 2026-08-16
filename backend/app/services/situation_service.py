@@ -211,10 +211,10 @@ For each wardrobe item, check if its colour, formality, and style are COMPATIBLE
 RULE — TWO TRULY DIFFERENT OUTFITS:
 - Outfit 1 and Outfit 2 MUST look visually different in photos — different silhouette, different colour palette, different vibe.
 - DO NOT use the same top + same bottom in both outfits.
-- DO NOT use the same jacket, blazer, or outerwear in both outfits — if Outfit 1 has a blazer, Outfit 2 MUST NOT have the same blazer (either use a completely different jacket or no jacket at all).
-- If Outfit 1 is casual (e.g. t-shirt + chinos), Outfit 2 must be a different formality tier or completely different style.
+- DO NOT use the same jacket, blazer, or outerwear in both outfits.
+- COLOUR CONTRAST RULE: if Outfit 1 uses warm tones (orange, rust, brown, olive, earth), Outfit 2 MUST use cool tones (navy, grey, white, black, blue, slate) — and vice versa. The colour palettes must be OPPOSITE.
 - If both use the same wardrobe item, that is FORBIDDEN. Each wardrobe piece may appear in only ONE outfit.
-- Different missing_items too — Outfit 1 and Outfit 2 missing items must differ in category or colour.
+- Different missing_items too — Outfit 1 and Outfit 2 missing items must differ in both category and colour.
 
 SHOPPING BUDGET RULE:
 Budget: {prefs.get('budget','Not specified')}
@@ -521,13 +521,16 @@ async def generate_composite_image(state: SituationState) -> dict:
                     f"  {outfit_str2}\n"
                     f"  Colour palette: {color_palette2 or 'different from outfit 1'}\n\n"
                     f"{clothing_type_note2}\n\n"
-                    f"OUTFIT 1 (for reference — outfit 2 MUST visually differ):\n"
-                    f"  Was: {outfit_str1[:120]}\n"
-                    f"  Outfit 2 must have: different colours, different garment types, different silhouette\n\n"
+                    f"OUTFIT 1 WAS: {outfit_str1[:120]}\n"
+                    f"CRITICAL COLOUR RULE: Outfit 2 MUST use completely different colours from Outfit 1.\n"
+                    f"  - If Outfit 1 had warm/earthy tones (orange, rust, brown, olive), Outfit 2 MUST use cool tones (navy, grey, white, black).\n"
+                    f"  - If Outfit 1 had cool tones, Outfit 2 MUST use warm tones.\n"
+                    f"  - DO NOT show any orange, rust, or brown tones unless specifically listed in Outfit 2 above.\n"
+                    f"  - The two outfits must look like completely different people's wardrobes.\n\n"
                     + (f"Reference images provided:\n" + "\n".join(f"  - {r}" for r in ref2) + "\n\n" if ref2 else "")
                     + f"GENERATION RULES:\n"
                     f"  1. Person: same face/skin/hair from selfie, unchanged\n"
-                    f"  2. Clothing: ONLY the garments listed above — do not contextually guess\n"
+                    f"  2. Clothing: ONLY the garments listed above — different colours from Outfit 1\n"
                     f"  3. Visual contrast: must look distinctly different from Outfit 1 above\n"
                     f"  4. Anatomy: natural proportions, full body shot\n"
                     f"  5. Style: {style_ctx}\n"
