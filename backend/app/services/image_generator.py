@@ -289,6 +289,27 @@ async def generate_outfit_image(
     b64 = base64.b64encode(image_data).decode("utf-8")
     image_url = f"data:image/jpeg;base64,{b64}"
 
+    # ── Gemini usage log (fire-and-forget) ────────────────────────────────────
+    # Sends a minimal text call to Gemini so every generation appears in your
+    # Google AI Studio API usage dashboard for tracking.
+    import asyncio as _asyncio
+    from datetime import datetime as _dt
+
+    async def _log_generation():
+        try:
+            _ts = _dt.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+            _log_client = get_client()
+            _log_client.models.generate_content(
+                model=settings.GEMINI_MODEL_RECOMMEND,
+                contents=f"[StyleAI image generation log] user={user_id[:8]} outfit={outfit_desc[:60]} ts={_ts}",
+                config=gtypes.GenerateContentConfig(max_output_tokens=1, temperature=0.0),
+            )
+        except Exception:
+            pass  # non-critical, never block main flow
+
+    _asyncio.ensure_future(_log_generation())
+    # ──────────────────────────────────────────────────────────────────────────
+
     # Also try to persist to DB (skip if user_id is invalid)
     if db_session:
         from app.db.models import GeneratedImage
