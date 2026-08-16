@@ -211,7 +211,8 @@ For each wardrobe item, check if its colour, formality, and style are COMPATIBLE
 RULE — TWO TRULY DIFFERENT OUTFITS:
 - Outfit 1 and Outfit 2 MUST look visually different in photos — different silhouette, different colour palette, different vibe.
 - DO NOT use the same top + same bottom in both outfits.
-- If Outfit 1 is casual (e.g. t-shirt + chinos), Outfit 2 must be a different formality tier (e.g. shirt + trousers) or completely different style.
+- DO NOT use the same jacket, blazer, or outerwear in both outfits — if Outfit 1 has a blazer, Outfit 2 MUST NOT have the same blazer (either use a completely different jacket or no jacket at all).
+- If Outfit 1 is casual (e.g. t-shirt + chinos), Outfit 2 must be a different formality tier or completely different style.
 - If both use the same wardrobe item, that is FORBIDDEN. Each wardrobe piece may appear in only ONE outfit.
 - Different missing_items too — Outfit 1 and Outfit 2 missing items must differ in category or colour.
 

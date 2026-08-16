@@ -153,7 +153,6 @@ export default function RecommendationsPage() {
       const makeBody = (rec: Recommendation | undefined, feedback?: string) => ({
         outfit_id: rec?.outfit_id || crypto.randomUUID(),
         user_id: storedUserId,
-        // Include image_url so backend can fetch actual dress photos for generation
         items: (rec?.items || []).map((i) => ({
           item_id: i.item_id || crypto.randomUUID(),
           category: i.category,
@@ -164,10 +163,22 @@ export default function RecommendationsPage() {
         face_profile: faceProfile,
         occasion: sessionStorage.getItem("situation_text") || "Casual",
         selfie_b64: selfieB64,
-        // NOTE: place_b64 intentionally omitted — too large for free-tier (causes 502/OOM)
-        // Selfie alone is enough for quality generation
-        user_feedback: feedback?.trim() || undefined,
-      });
+        // Compress place image to ~20KB before sending (300px, 40% quality)
+        place_b64: (() => {
+          const raw = sessionStorage.getItem("place_image_b64");
+          if (!raw) return undefined;
+          try {
+            const img = new Image();
+            img.src = raw;
+            const canvas = document.createElement("canvas");
+            const MAX = 300;
+            const scale = Math.min(1, MAX / Math.max(img.naturalWidth || MAX, img.naturalHeight || MAX));
+            canvas.width = (img.naturalWidth || MAX) * scale;
+            canvas.height = (img.naturalHeight || MAX) * scale;
+            canvas.getContext("2d")?.drawImage(img, 0, 0, canvas.width, canvas.height);
+            return canvas.toDataURL("image/jpeg", 0.4);
+          } catch { return raw.substring(0, 50000) || undefined; } // fallback: truncate if compress fails
+        })(),
         user_feedback: feedback?.trim() || undefined,
       });
 

@@ -126,12 +126,11 @@ async def generate_outfit_image(
         try:
             raw_b64 = selfie_b64.split(",", 1)[-1]
             raw = base64.b64decode(raw_b64)
-            # Compress selfie aggressively — only face reference needed, small is fine
             from PIL import Image as _PIL
             import io as _io
             pil = _PIL.open(_io.BytesIO(raw)).convert("RGB")
             w, h = pil.size
-            scale = min(1.0, 512 / max(w, h))  # max 512px
+            scale = min(1.0, 512 / max(w, h))
             if scale < 1.0:
                 pil = pil.resize((int(w * scale), int(h * scale)), _PIL.LANCZOS)
             buf = _io.BytesIO()
@@ -141,9 +140,27 @@ async def generate_outfit_image(
             logger.warning("Failed to decode selfie_b64: %s", e)
             selfie_bytes = None
 
-    # NOTE: place_b64 intentionally not decoded here — too large for free-tier
-    # The outfit description text provides enough context for placement
-    place_bytes = None
+    # Decode place image (frontend sends pre-compressed ~20KB version)
+    place_bytes: Optional[bytes] = None
+    if place_b64:
+        try:
+            raw_b64 = place_b64.split(",", 1)[-1]
+            place_bytes = base64.b64decode(raw_b64)
+            # Extra safety compress in case frontend version is still large
+            if len(place_bytes) > 100_000:
+                from PIL import Image as _PIL2
+                import io as _io2
+                pil2 = _PIL2.open(_io2.BytesIO(place_bytes)).convert("RGB")
+                w2, h2 = pil2.size
+                scale2 = min(1.0, 400 / max(w2, h2))
+                if scale2 < 1.0:
+                    pil2 = pil2.resize((int(w2 * scale2), int(h2 * scale2)), _PIL2.LANCZOS)
+                buf2 = _io2.BytesIO()
+                pil2.save(buf2, format="JPEG", quality=45)
+                place_bytes = buf2.getvalue()
+        except Exception as e:
+            logger.warning("Failed to decode place_b64: %s", e)
+            place_bytes = None
 
     gender_raw = (face_profile.get("gender") or "").lower()
     if gender_raw in ("female", "woman", "girl"):
