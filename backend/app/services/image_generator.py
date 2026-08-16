@@ -98,14 +98,17 @@ async def generate_outfit_image(
     )
     cache_key = image_cache_key(prompt_hash)
 
-    # 2. Redis cache check
+    # 2. Redis cache check — skip stale /static/ entries (old format before base64 migration)
     cached = await cache_get(cache_key)
     if cached:
-        logger.info("Image cache HIT for hash %s", prompt_hash[:8])
         url = cached if isinstance(cached, str) else cached.get("image_url", "")
-        return {"image_url": url, "from_cache": True, "prompt_hash": prompt_hash}
+        if url and not url.startswith("/static/"):  # skip old ephemeral file URLs
+            logger.info("Image cache HIT for hash %s", prompt_hash[:8])
+            return {"image_url": url, "from_cache": True, "prompt_hash": prompt_hash}
+        else:
+            logger.info("Stale /static/ cache entry for %s — regenerating", prompt_hash[:8])
 
-    # 3. Check DB (secondary cache)
+    # 3. Check DB (secondary cache) — also skip stale /static/ entries
     if db_session:
         from sqlalchemy import select
         from app.db.models import GeneratedImage
@@ -113,7 +116,7 @@ async def generate_outfit_image(
             select(GeneratedImage).where(GeneratedImage.prompt_hash == prompt_hash)
         )
         existing = result.scalar_one_or_none()
-        if existing:
+        if existing and existing.image_url and not existing.image_url.startswith("/static/") and existing.image_url != "[base64]":
             await cache_set(cache_key, existing.image_url, settings.CACHE_TTL_IMAGE)
             return {"image_url": existing.image_url, "from_cache": True, "prompt_hash": prompt_hash}
 
