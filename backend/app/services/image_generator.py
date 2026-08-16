@@ -114,8 +114,8 @@ async def generate_outfit_image(
         from app.db.models import GeneratedImage
         result = await db_session.execute(
             select(GeneratedImage).where(GeneratedImage.prompt_hash == prompt_hash)
-        )
-        existing = result.scalar_one_or_none()
+        )        # scalars().first() — safe when duplicates exist; scalar_one_or_none() crashes
+        existing = result.scalars().first()
         if existing and existing.image_url and not existing.image_url.startswith("/static/") and existing.image_url != "[base64]":
             await cache_set(cache_key, existing.image_url, settings.CACHE_TTL_IMAGE)
             return {"image_url": existing.image_url, "from_cache": True, "prompt_hash": prompt_hash}
